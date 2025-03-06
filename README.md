@@ -76,7 +76,7 @@ Utilizes GPT models to assist in build configuration and problem resolution.
 ## Citation
 
 ```bibtex
-@article{zhuo2025llm,
+@article{zhuo2025config,
   title={Configuraing Multilingual Docker Environment via Code Agent},
   author={Zhuo, Terry Yue},
   year={2025}
@@ -89,8 +89,8 @@ Apache-2.0
 
 ## Ackowledgement
 
-[https://github.com/bytedance/Repo2Run](https://github.com/bytedance/Repo2Run)
-[https://github.com/Aider-AI/aider](https://github.com/Aider-AI/aider)
+- [https://github.com/bytedance/Repo2Run](https://github.com/bytedance/Repo2Run)
+- [https://github.com/Aider-AI/aider](https://github.com/Aider-AI/aider)
 
 
 ## Contact
