@@ -21,6 +21,7 @@ import os
 import glob
 import re
 import sys
+import json
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from parser.parse_command import match_download, match_runpipreqs, match_runtest, match_poetryruntest, match_conflict_solve, match_waitinglist_add, match_waitinglist_addfile, match_conflictlist_clear, match_waitinglist_clear, match_waitinglist_show, match_conflictlist_show, match_clear_configuration, match_cargo_deps, match_maven_deps, match_gradle_deps, match_npm_deps, match_go_deps, match_npm_build, match_maven_build, match_gradle_build, match_cargo_build, match_go_build, match_cmake_build, match_jest_test, match_junit_test, match_cargo_test, match_go_test, match_change_python_version
 from download import download
@@ -940,10 +941,102 @@ Explanation: Clear all the items in the waiting list.'''
                         result_message = '\n'.join(output_lines)
                         if 'Congratulations, you have successfully configured the environment!' in result_message or command == 'python /home/tools/generate_diff.py'\
                             or command == 'pipdeptree --json-tree' or command == 'pipdeptree':
+                            # Python dependencies
+                            try:
+                                pipdeptree_json, pipdeptree_json_return_code = self.execute('pipdeptree --json-tree', waiting_list, conflict_list)
+                            except:
+                                pipdeptree_json_return_code = -1
+                            try:
+                                pipdeptree_normal, pipdeptree_normal_return_code = self.execute('pipdeptree', waiting_list, conflict_list)
+                            except:
+                                pipdeptree_normal_return_code = -1
+                            try:
+                                generate_diff, generate_diff_return_code = self.execute('generate_diff', waiting_list, conflict_list)
+                            except:
+                                generate_diff_return_code = -1
+                            try:
+                                pip_list, pip_list_return_code = self.execute('$pip list --format json$', waiting_list, conflict_list)
+                            except:
+                                pip_list_return_code = -1
+
+                            # Node.js dependencies
+                            try:
+                                npm_list, npm_list_return_code = self.execute('npm list --json', waiting_list, conflict_list)
+                            except:
+                                npm_list_return_code = -1
+                            try:
+                                yarn_list, yarn_list_return_code = self.execute('yarn list --json', waiting_list, conflict_list)
+                            except:
+                                yarn_list_return_code = -1
+
+                            # Java dependencies
+                            try:
+                                mvn_deps, mvn_deps_return_code = self.execute('mvn dependency:tree -DoutputType=dot', waiting_list, conflict_list)
+                            except:
+                                mvn_deps_return_code = -1
+                            try:
+                                gradle_deps, gradle_deps_return_code = self.execute('gradle dependencies', waiting_list, conflict_list)
+                            except:
+                                gradle_deps_return_code = -1
+
+                            # Rust dependencies
+                            try:
+                                cargo_deps, cargo_deps_return_code = self.execute('cargo tree --format=json', waiting_list, conflict_list)
+                            except:
+                                cargo_deps_return_code = -1
+
+                            # Go dependencies
+                            try:
+                                go_list, go_list_return_code = self.execute('go list -m -json all', waiting_list, conflict_list)
+                            except:
+                                go_list_return_code = -1
+
+                            # Save dependency information
+                            output_dir = f'{self.sandbox.root_path}/output/{self.sandbox.full_name}'
+                            os.makedirs(output_dir, exist_ok=True)
+                            os.makedirs(f'{output_dir}/patch', exist_ok=True)
+
+                            # Save Python dependencies
+                            if len(generate_diff.strip()) > 0 and generate_diff_return_code == 0:
+                                with open(f'{output_dir}/patch/final_patch.diff', 'w') as w0:
+                                    w0.write(generate_diff)
+                            if pipdeptree_json_return_code == 0:
+                                with open(f'{output_dir}/pipdeptree.json', 'w') as w1:
+                                    w1.write(pipdeptree_json)
+                            if pipdeptree_normal_return_code == 0:
+                                with open(f'{output_dir}/pipdeptree.txt', 'w') as w2:
+                                    w2.write(pipdeptree_normal)
+                            if pip_list_return_code == 0:
+                                with open(f'{output_dir}/pip_list.json', 'w') as w2:
+                                    w2.write(json.dumps(json.loads(pip_list), indent=4))
+
+                            # Save Node.js dependencies
+                            if npm_list_return_code == 0:
+                                with open(f'{output_dir}/npm_list.json', 'w') as w:
+                                    w.write(npm_list)
+                            if yarn_list_return_code == 0:
+                                with open(f'{output_dir}/yarn_list.json', 'w') as w:
+                                    w.write(yarn_list)
+
+                            # Save Java dependencies
+                            if mvn_deps_return_code == 0:
+                                with open(f'{output_dir}/maven_deps.dot', 'w') as w:
+                                    w.write(mvn_deps)
+                            if gradle_deps_return_code == 0:
+                                with open(f'{output_dir}/gradle_deps.txt', 'w') as w:
+                                    w.write(gradle_deps)
+
+                            # Save Rust dependencies
+                            if cargo_deps_return_code == 0:
+                                with open(f'{output_dir}/cargo_deps.json', 'w') as w:
+                                    w.write(cargo_deps)
+
+                            # Save Go dependencies
+                            if go_list_return_code == 0:
+                                with open(f'{output_dir}/go_deps.json', 'w') as w:
+                                    w.write(go_list)
+
                             return result_message, return_code
-                        else:
-                            result_message = f'Running `{command}`...\n' + result_message + '\n'
-                            return truncate_msg(result_message, command), return_code
                 
                 except pexpect.TIMEOUT:
                     if match_runtest(command) or match_poetryruntest(command):
