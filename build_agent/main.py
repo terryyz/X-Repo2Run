@@ -31,27 +31,52 @@ import ast
 import shutil
 
 def move_files_to_repo(source_folder):
-    # 定义目标文件夹所处的路径
+    # Define target folder path
     target_folder = os.path.join(source_folder, 'repo_inner_directory_long_long_name_to_avoid_duplicate')
     
-    # 检查目标文件夹是否存在，不存在则创建
+    # Create target folder if it doesn't exist
     if not os.path.exists(target_folder):
         os.mkdir(target_folder)
     
-    # 遍历源文件夹中的所有文件和文件夹
+    # Move all files except the target folder
     for item in os.listdir(source_folder):
         item_path = os.path.join(source_folder, item)
         
-        # 跳过目标文件夹
         if item == 'repo_inner_directory_long_long_name_to_avoid_duplicate':
             continue
         
-        # 移动文件或文件夹到目标文件夹
         shutil.move(item_path, os.path.join(target_folder, item))
 
     os.rename(target_folder, os.path.join(source_folder, 'repo'))
 
-# 下载repo到utils/repo文件夹，并且去除最外层文件夹，去除可能存在的Dockerfile
+def setup_local_repo(root_path, local_path, author_name="local", repo_name="repo"):
+    """Set up a local repository for processing"""
+    target_dir = f'{root_path}/utils/repo/{author_name}/{repo_name}'
+    
+    # Create target directory structure
+    os.makedirs(target_dir, exist_ok=True)
+    
+    # Copy local files to target location
+    shutil.copytree(local_path, os.path.join(target_dir, 'repo'), dirs_exist_ok=True)
+    
+    # Create .pipreqs directory and generate requirements if possible
+    os.makedirs(f'{target_dir}/repo/.pipreqs', exist_ok=True)
+    pipreqs_cmd = "pipreqs --savepath=.pipreqs/requirements_pipreqs.txt --force"
+    try:
+        pipreqs_result = subprocess.run(pipreqs_cmd, cwd=f"{target_dir}/repo", 
+                                      capture_output=True, shell=True)
+        with open(f'{target_dir}/repo/.pipreqs/pipreqs_output.txt', 'w') as w1:
+            w1.write(pipreqs_result.stdout.decode('utf-8'))
+        with open(f'{target_dir}/repo/.pipreqs/pipreqs_error.txt', 'w') as w2:
+            w2.write(pipreqs_result.stderr.decode('utf-8'))
+    except:
+        pass
+
+    # Create output directory
+    os.makedirs(f'{root_path}/output/{author_name}/{repo_name}', exist_ok=True)
+    with open(f'{root_path}/output/{author_name}/{repo_name}/sha.txt', 'w') as w1:
+        w1.write('local')
+
 def download_repo(root_path, full_name, sha):
     if len(full_name.split('/')) != 2:
         raise Exception("full_name Wrong!!!")
@@ -84,11 +109,17 @@ def download_repo(root_path, full_name, sha):
         w1.write(sha)
 
 def main():
-    # subprocess.run('docker rm -f $(docker ps -aq)', shell=True)
-    parser = argparse.ArgumentParser(description='Run script with repository full name as an argument.')
-    parser.add_argument('full_name', type=str, help='The full name of the repository (e.g., user/repo).')
-    parser.add_argument('sha', type=str, help='sha')
-    parser.add_argument('--root_path', type=str, default='build_agent', help='root path (optional, defaults to build_agent)')
+    parser = argparse.ArgumentParser(description='Run script with either repository information or local path.')
+    
+    # Create mutually exclusive argument group
+    source_group = parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument('--repo', nargs=2, metavar=('FULL_NAME', 'SHA'),
+                            help='The full name of the repository (e.g., user/repo) and SHA')
+    source_group.add_argument('--local', type=str, metavar='PATH',
+                            help='Local folder path to process')
+    
+    parser.add_argument('--root_path', type=str, default='build_agent',
+                       help='root path (optional, defaults to build_agent)')
     
     args = parser.parse_args()
 
@@ -96,12 +127,25 @@ def main():
     conflict_list = ConflictList()
 
     root_path = args.root_path
-
     if not os.path.isabs(root_path):
         root_path = os.path.abspath(root_path)
 
-    full_name = args.full_name
-    sha = args.sha
+    if args.repo:
+        full_name, sha = args.repo
+        if len(full_name.split('/')) != 2:
+            raise Exception("Repository full name must be in format 'user/repo'")
+        download_repo(root_path, full_name, sha)
+        author_name, repo_name = full_name.split('/')
+    else:
+        local_path = os.path.abspath(args.local)
+        if not os.path.exists(local_path):
+            raise Exception(f"Local path '{local_path}' does not exist")
+        setup_local_repo(root_path, local_path)
+        author_name, repo_name = "local", "repo"
+
+    print(f"Processing {'repository: ' + author_name + '/' + repo_name if args.repo else 'local path: ' + args.local}")
+
+    # subprocess.run('docker rm -f $(docker ps -aq)', shell=True)
     print(full_name)
     # if os.path.exists(f'{root_path}/{full_name}/TIMEOUT'):
     #     sys.exit(123)

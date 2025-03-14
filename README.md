@@ -8,6 +8,7 @@ An LLM-based build agent system that helps manage and automate build processes i
 - Automated dependency management and conflict resolution
 - Waiting list and conflict list management for package dependencies
 - Error format handling and output collection
+- Support for both remote repositories and local folders
 
 ## Prerequisites
 
@@ -32,16 +33,34 @@ pip install -r requirements.txt
 
 Move tools `tools` to `/home/tools`.
 
-The main entry point is through the build agent's main script. You can run it with the following arguments:
+The build agent can be run in two modes:
+
+### 1. Remote Repository Mode
+
+For building from a GitHub repository:
 
 ```bash
-python build_agent/main.py <repository_full_name> <sha>
+python build_agent/main.py --repo <repository_full_name> <sha>
 ```
 
 Where:
 - `repository_full_name`: The full name of the repository (e.g., user/repo)
 - `sha`: The commit SHA
-- `root_path`: The root path for the build process
+
+### 2. Local Folder Mode
+
+For building from a local folder:
+
+```bash
+python build_agent/main.py --local <path_to_folder>
+```
+
+Where:
+- `path_to_folder`: Path to your local project folder
+
+### Additional Options
+
+- `--root_path`: The root path for the build process (optional, defaults to build_agent)
 
 ## Project Structure
 
