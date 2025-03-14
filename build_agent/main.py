@@ -145,55 +145,63 @@ def main():
 
     print(f"Processing {'repository: ' + author_name + '/' + repo_name if args.repo else 'local path: ' + args.local}")
 
-    # subprocess.run('docker rm -f $(docker ps -aq)', shell=True)
-    print(full_name)
-    # if os.path.exists(f'{root_path}/{full_name}/TIMEOUT'):
-    #     sys.exit(123)
-    print(sha)
-    if os.path.exists(f'{root_path}/output/{full_name}/patch'):
-        rm_cmd = f"rm -rf {root_path}/output/{full_name}/patch"
+    # Setup paths and directories
+    repo_path = f"{author_name}/{repo_name}"
+    output_path = f'{root_path}/output/{author_name}/{repo_name}'
+    
+    # Create or clean output directory
+    if os.path.exists(f'{output_path}/patch'):
+        rm_cmd = f"rm -rf {output_path}/patch"
         subprocess.run(rm_cmd, shell=True, check=True)
-    if not os.path.exists(f'{root_path}/output/{full_name.split("/")[0]}/{full_name.split("/")[1]}'):
-        subprocess.run(f'mkdir -p {root_path}/output/{full_name.split("/")[0]}/{full_name.split("/")[1]}', shell=True)
-    if os.path.exists(f'{root_path}/utils/repo/{full_name}'):
-        init_cmd = f"rm -rf {root_path}/utils/repo/{full_name} && mkdir -p {root_path}/utils/repo/{full_name}"
+    if not os.path.exists(output_path):
+        subprocess.run(f'mkdir -p {output_path}', shell=True)
+
+    # Setup or clean repo directory
+    repo_dir = f'{root_path}/utils/repo/{repo_path}'
+    if os.path.exists(repo_dir):
+        init_cmd = f"rm -rf {repo_dir} && mkdir -p {repo_dir}"
     else:
-        init_cmd = f"mkdir -p {root_path}/utils/repo/{full_name}"
+        init_cmd = f"mkdir -p {repo_dir}"
     subprocess.run(init_cmd, check=True, shell=True)
     
     def timer():
-        time.sleep(3600*2)  # 等待2h
+        time.sleep(3600*2)  # Wait for 2h
         print("Timeout for 2 hour!")
-        os._exit(1)  # 强制退出程序
+        os._exit(1)  # Force exit program
 
-    # 启动定时器线程
+    # Start timer thread
     timer_thread = threading.Thread(target=timer)
     timer_thread.daemon = True
     timer_thread.start()
 
-    download_repo(root_path, full_name, sha)
+    # Setup repository (either download or copy local)
+    if args.repo:
+        download_repo(root_path, args.repo[0], args.repo[1])
 
     trajectory = []
 
-    configuration_sandbox = Sandbox("python:3.10", full_name, root_path)
+    configuration_sandbox = Sandbox("python:3.10", repo_path, root_path)
     configuration_sandbox.start_container()
-    configuration_agent = Configuration(configuration_sandbox, 'ubuntu', full_name, root_path, 100)
+    configuration_agent = Configuration(configuration_sandbox, 'ubuntu', repo_path, root_path, 100)
     msg, outer_commands = configuration_agent.run('/tmp', trajectory, waiting_list, conflict_list)
-    with open(f'{root_path}/output/{full_name.split("/")[0]}/{full_name.split("/")[1]}/track.json', 'w') as w1:
+    
+    # Save outputs
+    with open(f'{output_path}/track.json', 'w') as w1:
         w1.write(json.dumps(msg, indent=4))
     commands = configuration_sandbox.stop_container()
-    with open(f'{root_path}/output/{full_name.split("/")[0]}/{full_name.split("/")[1]}/inner_commands.json', 'w') as w2:
+    with open(f'{output_path}/inner_commands.json', 'w') as w2:
         w2.write(json.dumps(commands, indent=4))
-    with open(f'{root_path}/output/{full_name.split("/")[0]}/{full_name.split("/")[1]}/outer_commands.json', 'w') as w3:
+    with open(f'{output_path}/outer_commands.json', 'w') as w3:
         w3.write(json.dumps(outer_commands, indent=4))
+    
     try:
-        integrate_dockerfile(f'{root_path}/output/{full_name}')
+        integrate_dockerfile(f'{output_path}')
         msg = f'Generate success!'
-        with open(f'{root_path}/output/{full_name}/track.txt', 'a') as a1:
+        with open(f'{output_path}/track.txt', 'a') as a1:
             a1.write(msg + '\n')
     except Exception as e:
         msg = f'integrate_docker failed, reason:\n {e}'
-        with open(f'{root_path}/output/{full_name}/track.txt', 'a') as a1:
+        with open(f'{output_path}/track.txt', 'a') as a1:
             a1.write(msg + '\n')
 
 if __name__ == '__main__':
