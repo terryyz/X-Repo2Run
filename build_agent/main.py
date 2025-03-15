@@ -57,7 +57,10 @@ def setup_local_repo(root_path, local_path, author_name="local", repo_name="repo
     os.makedirs(target_dir, exist_ok=True)
     
     # Copy local files to target location
-    shutil.copytree(local_path, os.path.join(target_dir, 'repo'), dirs_exist_ok=True)
+    shutil.copytree(local_path, target_dir, dirs_exist_ok=True)
+    
+    # Move files to repo subdirectory consistently with remote repos
+    move_files_to_repo(target_dir)
     
     # Create .pipreqs directory and generate requirements if possible
     os.makedirs(f'{target_dir}/repo/.pipreqs', exist_ok=True)
@@ -82,10 +85,19 @@ def download_repo(root_path, full_name, sha):
         raise Exception("full_name Wrong!!!")
     author_name = full_name.split('/')[0]
     repo_name = full_name.split('/')[1]
-    if not os.path.exists(f'{root_path}/utils/repo/{author_name}/{repo_name}'):
-        os.system(f'mkdir -p {root_path}/utils/repo/{author_name}/{repo_name}')
+    
+    # Create or clean the author directory
+    author_dir = f'{root_path}/utils/repo/{author_name}'
+    os.makedirs(author_dir, exist_ok=True)
+    
+    # Remove existing repo directory if it exists
+    repo_dir = f'{author_dir}/{repo_name}'
+    if os.path.exists(repo_dir):
+        shutil.rmtree(repo_dir)
+    
+    # Clone the repository
     download_cmd = f"git clone https://github.com/{full_name}.git"
-    subprocess.run(download_cmd, cwd=f'{root_path}/utils/repo/{author_name}', check=True, shell=True)
+    subprocess.run(download_cmd, cwd=author_dir, check=True, shell=True)
     move_files_to_repo(f'{root_path}/utils/repo/{author_name}/{repo_name}')
     if os.path.exists(f"{root_path}/utils/repo/{author_name}/{repo_name}/repo/Dockerfile") and not os.path.isdir(f"{root_path}/utils/repo/{author_name}/{repo_name}/repo/Dockerfile"):
         rm_dockerfile_cmd = f"rm -rf {root_path}/utils/repo/{author_name}/{repo_name}/repo/Dockerfile"
@@ -105,7 +117,7 @@ def download_repo(root_path, full_name, sha):
     subprocess.run(checkout_cmd, cwd=f'{root_path}/utils/repo/{author_name}/{repo_name}/repo', capture_output=True, shell=True)
 
     # x = subprocess.run('git log -1 --format="%H"', cwd=f'{root_path}/utils/repo/{author_name}/{repo_name}/repo', capture_output=True, shell=True)
-    with open(f'{root_path}/output/{author_name}/{repo_name}/sha.txt', 'w') as w1:
+    with open(f'{root_path}/utils/repo/{author_name}/{repo_name}/sha.txt', 'w') as w1:
         w1.write(sha)
 
 def main():

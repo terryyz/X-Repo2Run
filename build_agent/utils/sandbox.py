@@ -1036,8 +1036,8 @@ Explanation: Clear all the items in the waiting list.'''
                                 with open(f'{output_dir}/go_deps.json', 'w') as w:
                                     w.write(go_list)
 
-                            return result_message, return_code
-                
+                        return result_message, return_code
+
                 except pexpect.TIMEOUT:
                     if match_runtest(command) or match_poetryruntest(command):
                         os.sytem(f'touch {self.sandbox.root_path}/output/{self.sandbox.full_name}/TIMEOUT')
