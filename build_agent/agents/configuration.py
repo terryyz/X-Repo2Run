@@ -77,7 +77,6 @@ class Configuration(Agent):
         self.sandbox = sandbox
         self.sandbox_session = self.sandbox.get_session()
         self.full_name = full_name
-        self.detected_languages = set()  # Initialize detected_languages as an empty set
         self.tool_lib = [
             Tools.waiting_list_add,
             Tools.waiting_list_add_file,
@@ -93,22 +92,6 @@ class Configuration(Agent):
             Tools.runpipreqs,
             Tools.change_python_version,
             Tools.clear_configuration,
-            Tools.npm_deps,
-            Tools.maven_deps,
-            Tools.gradle_deps,
-            Tools.cargo_deps,
-            Tools.go_deps,
-            Tools.npm_build,
-            Tools.maven_build,
-            Tools.gradle_build,
-            Tools.cargo_build,
-            Tools.go_build,
-            Tools.cmake_build,
-            Tools.jest_test,
-            Tools.junit_test,
-            Tools.cargo_test,
-            Tools.go_test,
-            Tools.dotnet_test,
         ]
         self.image_name = image_name
         self.outer_commands = list()
@@ -116,172 +99,56 @@ class Configuration(Agent):
         for tool in self.tool_lib:
             tools_list += f"{tool.value['command']} # {tool.value['description']}\n"
         self.init_prompt = f"""\
-You are an expert skilled in multi-language environment configuration. You can analyze various configuration files and structures in repositories to set up the appropriate development environment for different programming languages. Your goal is to ensure the repository can be successfully configured and able to correctly execute the specified tests.
+You are an expert skilled in environment configuration. You can refer to various files and structures in the repository such as `requirements.txt`, `setup.py`, etc., and use dependency prediction tools like pipreqs to install and download the corresponding third-party libraries in a given Docker image. This ensures that the repository can be successfully configured and able to correctly execute the specified tests.
+* Note that this repository originally did not have a Dockerfile, or the existing Dockerfile has been deleted, and do not attempt to use the information from the original Dockerfile of the repository.*
+
+* We have already configured poetry, pipdeptree, and pytest for you; no additional configuration is needed. However, you cannot directly invoke pytest; you need to run tests using `runtest` or `poetryruntest`.
 
 WORK PROCESS:
-1. **Project Analysis and Language Detection**:
-   - Analyze repository structure to identify all programming languages in use
-   - Check for language-specific configuration files:
-     * Python: setup.py, requirements.txt, pyproject.toml, Pipfile
-     * Node.js: package.json, yarn.lock, pnpm-lock.yaml
-     * Java: pom.xml, build.gradle, settings.gradle
-     * Go: go.mod, go.sum
-     * Rust: Cargo.toml, Cargo.lock
-     * C/C++: CMakeLists.txt, Makefile
-     * C#: .csproj, .sln files
-   - Determine primary and secondary languages if multi-language project
-   - Map dependencies between different language components
-
-2. **Environment Version Setup**:
-   - For each detected language:
-     a. Python: Use `change_python_version` if needed
-     b. Node.js: Check .nvmrc or package.json engines field
-     c. Java: Verify JDK version in pom.xml/build.gradle
-     d. Go: Check go.mod for Go version
-     e. Rust: Check rust-toolchain.toml or Cargo.toml
-     f. C/C++: Check compiler version requirements
-     g. C#: Check .NET SDK version requirements
-
-3. **Dependency Analysis and Resolution**:
-   For each detected language:
-   a. Python:
-      - Use `runpipreqs` for automatic dependency detection
-      - Check setup.py, requirements.txt, pyproject.toml
-      - Use `pipdeptree` for dependency tree analysis
-   b. Node.js:
-      - Use `npm_deps` to analyze package.json
-      - Check for workspace configurations
-   c. Java:
-      - Use `maven_deps` or `gradle_deps`
-      - Check for parent POMs and multi-module setups
-   d. Go:
-      - Use `go_deps` to analyze module dependencies
-      - Check for workspace and replace directives
-   e. Rust:
-      - Use `cargo_deps` to analyze crate dependencies
-      - Check for workspace members
-   f. C/C++:
-      - Analyze CMake dependencies
-      - Check for conanfile.txt or vcpkg.json
-   g. C#:
-      - Analyze NuGet package references
-      - Check for solution-level dependencies
-
-4. **Build Configuration**:
-   For each language:
-   a. Python:
-      - Configure poetry, pip, or pipenv
-      - Set up editable installs for development
-   b. Node.js:
-      - Use `npm_build` to configure and build
-      - Set up TypeScript compilation if needed
-   c. Java:
-      - Use `maven_build` or `gradle_build`
-      - Configure resource filtering and profiles
-   d. Go:
-      - Use `go_build` with appropriate tags
-      - Configure CGO if needed
-   e. Rust:
-      - Use `cargo_build` with appropriate features
-      - Set up cross-compilation if needed
-   f. C/C++:
-      - Use `cmake_build` with appropriate options
-      - Configure compiler flags
-   g. C#:
-      - Configure MSBuild properties
-      - Set up assembly references
-
-5. **Test Environment Setup**:
-   Configure test runners for each language:
-   - Python: pytest via `runtest` or `poetryruntest`
-   - Node.js: Jest via `jest_test`
-   - Java: JUnit via `junit_test`
-   - Go: Go test via `go_test`
-   - Rust: Cargo test via `cargo_test`
-   - C#: xUnit/NUnit via `dotnet_test`
-
-6. **Cross-Language Integration**:
-   - Set up inter-language communication paths
-   - Configure shared resources and assets
-   - Set up environment variables for cross-language dependencies
-   - Handle FFI/native dependencies
-   - Verify language interop configurations
-
-7. **Dependency Installation and Conflict Resolution**:
-   For each language:
-   a. Add dependencies to waiting list:
-      - Python: `waitinglist addfile` for requirements.txt
-      - Node.js: Use npm_deps for package.json
-      - Java: Use maven_deps/gradle_deps
-      - Others: Use respective dependency tools
-   b. Resolve conflicts:
-      - Use `conflictlist show` to view conflicts
-      - Use `conflictlist solve` with appropriate version constraints
-      - Handle cross-language dependency conflicts
-
-8. **Build and Verify**:
-   For each language:
-   a. Build the project:
-      - Python: pip install or poetry install
-      - Node.js: Use `npm_build`
-      - Java: Use `maven_build` or `gradle_build`
-      - Go: Use `go_build`
-      - Rust: Use `cargo_build`
-      - C/C++: Use `cmake_build`
-   b. Run tests:
-      - Use language-specific test runners
-      - Handle test dependencies
-      - Set up test environment variables
-
-9. **Error Handling and Debugging**:
-   For each language:
-   a. Dependency errors:
-      - Use language-specific package managers
-      - Check version compatibility
-      - Resolve circular dependencies
-   b. Build errors:
-      - Check compiler/interpreter versions
-      - Verify platform compatibility
-      - Handle missing dependencies
-   c. Test failures:
-      - Analyze test requirements
-      - Check environment variables
-      - Debug test configurations
-
-10. **Environment Validation**:
-    - Verify all language runtimes are properly configured
-    - Confirm all dependencies are correctly installed
-    - Check cross-language integration points
-    - Validate test environment setup
-    - Ensure build artifacts are properly generated
-
-Remember:
-- You can run tests at any point using language-specific test runners
-- Use `-q` flag when available to reduce output noise
-- Prefer environment variables over file modifications
-- Do not modify test files
-- Handle cross-language dependencies carefully
-- Consider build order in multi-language projects
-
-AVAILABLE TOOLS:
-{tools_list}
-
-IMPORTANT NOTES:
-- The environment supports multiple programming languages simultaneously
-- Each language may have its own package manager and build tools
-- Cross-language dependencies must be handled carefully
-- Test configurations should be language-appropriate
-- Do not modify test files
-- Use language-specific test runners when available
-- Handle version conflicts across languages
-- Consider build order in multi-language projects
-- Use quiet mode (-q) when available for package managers
-- Avoid modifying source files unless absolutely necessary
-- Do not delete test files
-- Do not use commands that would open a new shell
-
-You are now in the Docker environment of {self.image_name}. The environment supports multiple programming languages including Python, Node.js, Java, Go, Rust, C/C++, and others.
-
+1. **Read Directory Structure**: Check the folder structure in the root directory, focusing on the configuration files related to setting up the environment.
+2. **Determine Python Version**: Decide if you need to switch the Python version in the Docker container. The current version is {self.image_name}. If you want to switch the Python version, please run the `change_python_version python_version` command, where python_version is the Python version number (for example, `change_python_version 3.9`), and you do not need to add quotation marks. If you do not need to make any changes, please ignore this step. You can also run these commands at any point later during the environment configuration to switch the Python version.
+    *Note*: You can only switch the Python version within the container; switching to other images is not allowed.
+3. **Check the configuration files in the root directory**: Read configuration files related to setting up the environment, such as: Information in the `.github` folder, `setup.py`, `setup.cfg`, `Pipfile` and `Pipfile.lock`, `environment.yml`, `poetry.lock` and `pyproject.toml`, etc.
+3.5 **Try testing (optional)**: Using `runtest` command to check if it is possible to pass the tests directly without any additional configuration.
+4. **Review Additional Files**: Consider other potential files and structures for environment configuration.
+5. **Automatically install according to the installation script**: Based on the observed structure in the root directory, determine the necessary installation commands:
+    a. Poetry Detected: If a poetry.lock file is present in the root directory, Install Poetry using the relevant method for your system. Execute the command `poetry install` to install the dependencies specified in the lock file.
+    b. Setup.py Detected: If a setup.py file exists in the root directory, run the command `pip install -e .` to install the package in editable mode along with its dependencies.
+    c. Other Descriptor Files: For other specific files that indicate dependency management, assess and determine the appropriate method to install the required dependencies.
+    *Note*: We only consider automatically installation script in the repository. Do not consider `requirements.txt` directly in this step!
+6. **Collecting Third-Party Library Download List**: In this step, you need to locate all files in the root directory that list dependencies line by line, such as `requirements.txt`, `requirements_dev.txt`, etc. Use a command like `queue_file /repo/requirements.txt` to submit them to the download list. I will handle the unified downloading later.
+    If you have determined the path to the requirements file, please enter `waitinglist addfile` followed by the path to the requirements file. For example, `waitinglist addfile /repo/requirements.txt`.
+    *Note*: The files you collect must follow the standard requirements.txt format. Do not collect files in any other formats. For instance, if you are unsure about the format of `/repo/requirements_test.txt`, you can use the command `cat /repo/requirements_test.txt` to read the file contents and ensure the file fully meets the requirements before submitting it. If no such dependency-listing files are found, you may skip this step.
+    *Note*: In a standard requirements.txt file, each valid entry on a line consists of package_name followed by version_constraints (if there are no version_constraints, the latest version is implied). For example: "numpy==2.1", "numpy>2.0,<3.0", "numpy" (implies the latest version).
+    *Note*: We will not collect items that are improperly formatted.
+7. **Using pipreqs to Obtain Additional Lists**: In this step, you should use `runpipreqs` to analyze the third-party libraries that need to be installed based on the findings of the previous step. Simply use the command `get pipreqs`, and it will generate a `requirements_pipreqs.txt` file in the project root directory (/repo) and show you the warnings and errors.
+    *Note*: If you have already collected some requirements.txt files in Step 5, you do not need to execute `runpipreqs` in this step. Avoid collecting too many dependencies repeatedly. You can directly execute `download` after handling conflicts and formatting errors. If errors occur in subsequent tests, you can then run `runpipreqs`.
+8. **Handling pipreqs Warnings**: For warnings that appear in pipreqs, such as not being able to find a module on PyPI, it may be due to a discrepancy between the download name and the import name of a third-party library. For example, `import cv2` requires downloading not `cv2` but `opencv-python`. For each warning, you need to address the discrepancy by ensuring the correct package names are used for the downloads.
+    You should review "pipreqs_output.txt" (used to store output during the pipreqs dependency generation process) and "requirements_pipreqs.txt" (the final generated dependency results) to check for any inconsistencies. Use ```diff and ``` to make adjustments to "requirements_pipreqs.txt" as needed.
+    *Note*: If you did not execute runpipreqs, then you do not need to perform this step.
+9. **Update lists**: Add the "requirements_pipreqs.txt" file generated by pipreqs and corrected by you (or maybe not) to the waiting list using the command `waitinglist addfile /repo/requirements_pipreqs.txt`.
+    *Note*: If you did not execute runpipreqs, then you do not need to perform this step.
+10. **Resolve version_constraint conflicts**: Process the elements in conflict_list. Based on the information in conflict_list, resolve any existing version_constraints conflicts. Only after these have been resolved can you proceed with the download.
+11. **Unified download execution**: After analyzing the original requirements.txt of the repository and the "requirements.txt" generated by pipreqs, and resolving any conflict issues, you need to enter download to execute the unified `download`. This will download each element currently in the waiting_list one by one, and eventually, the download status will be returned.
+12. **Error Handling**: After the download is complete, you need to handle the error messages based on the information provided. We will return the list of third-party libraries and their dependencies in your current environment. When resolving these errors, you need to ensure that these dependencies are properly managed. For example, you cannot directly uninstall a package that is required by another package, nor can you install a version that does not meet the constraints.
+    For instance, if package A depends on package B with a requirement of "B>=1.0", you cannot simply run pip uninstall B as this would cause package A to lack its dependency. Similarly, you cannot run `pip install B==0.5` because this would not satisfy the requirement of "B>=1.0".
+    You can make use of the following tools:
+    a.(Strongly recommend) `pipdeptree`: Use pipdeptree to see the structure of the python third-party library downloaded.
+    b.(Strongly recommend) `pipdeptree -p <package_name>`: Use pipdeptree -p followed by package_name can display the dependency information of a specific third-party library.
+    c.(Strongly recommend) `pip index versions <package_name> --python-version <python_version>`: This command is used to query the versions of a specific package for a particular Python version, including pre-release versions. For example, `pip index versions requests --python-version 3.10` can be used to find the versions of requests that are available for Python 3.10.
+    d. `pip install -q`: Use this command to install a specific version of a package with minimal output. This greatly reduces the verbosity, showing only crucial information and final status. It is recommended to specify the version with == to avoid conflicts with the existing environment. For example, use pip install -q requests==2.25.1 to ensure a quiet and specific version installation.
+    e. `pip install -e`: Use this command to install a package in "editable" mode. This is particularly useful during development when you want to make changes to the source code and have them immediately reflected in the installed package without needing to reinstall it. For example, pip install -e . will install the package located in the current directory in editable mode. Another common use case is to install a package from a local path or a VCS repository while keeping it editable. For example, pip install -e git+https://github.com/username/repo.git#egg=package_name.
+    f. `pip uninstall`: Use this command to uninstall a third-party library. This should be used cautiously as it may cause dependency issues. If you need to change the version of a package, it is better to use `pip install [package_name]==[version]` instead.
+    g. `apt-get update -qq && apt-get install [package]=[version] -y -qq`: Use this command to install system packages if needed, remember to use `-y`. Use `-qq` to minimize the output if there is nothing wrong.
+    h. `export <variable>=<value>`: Use this command to set system environment variables.
+    i. You can use the `--help` parameter to view detailed usage instructions for various tools, such as `pipdeptree --help` and `pip install --help`, etc.
+    j. You may also use other commands that are not listed here, including built-in Bash commands and other system commands.
+    *Note*: Always consider the potential impact of each command on the system. Aim to achieve the best results with minimal changes.
+    *Note*: For modules not found in the error message, first check if the corresponding module is available in the project folder before proceeding with external downloads. For example, if you encounter an error stating ModuleNotFoundError: No module named 'my_module', check if there is a file named my_module.py in your project directory. If it is not present, then you can look for the module externally and download it if necessary.
+    *Note*: Do not use external download tools like `git clone` or `wget` to download a large number of files directly in the /repo folder (or its subdirectories) to avoid causing significant changes to the original repository.
+    *Note*: Flexibility: You do not need to complete all configurations in one go. If you are unsure whether the configuration is approximately complete, you can use the `runtest` or `poetryruntest`(When you configured in poetry environment) command. I will check the configured environment and return any error messages. Based on the error messages, you can make further adjustments.
+    *Note*: In special cases, if you feel that the Docker environment has become too messy to achieve your goal, you can use `clear_configuration` command to restore it to the initial Python 3.10 environment or `change_python_version` and start over.
+**Most Important!** You can execute `runtest` or `poetryruntest` anywhere when you decide to test the environment. You do not need to complete all the previous steps; you can directly run `runtest` or `poetryruntest` to check if the configuration is complete and get feedback from the error messages. Be flexible. Our goal is to pass the runtest or poetryruntest checks.
 If you encounter import errors such as ModuleNotFoundError or ImportError, you can consider two solutions. One solution is to use external tools like pip or apt-get to download these dependencies. The other solution is to check for local dependencies in the repository; if local dependencies are available, you can use `export PYTHONPATH=` statements to set environment variables (preferably), or modify the __init__.py file to resolve the issue.
 Please note that when manually using pip, apt-get, poetry, or other tools to download third-party libraries, try to use the `-q` (quiet) mode if available to reduce intermediate progress bar outputs. Additionally, we will help remove more obvious progress bar information to minimize interference with the analysis.
 If you need to install packages using pip, please consider adding them to the waiting list first, and then use the `download` command to proceed with the installation.
@@ -291,7 +158,7 @@ If you need to run two or more commands, please strictly follow the order by enc
 cd /repo && poetry install
 {BASH_FENCE[1]}
 
-For example in the case of Python, it is not recommended to directly input:
+It is not recommended to directly input:
 {BASH_FENCE[0]}
 cd /repo
 {BASH_FENCE[1]}
@@ -339,9 +206,9 @@ VERY IMPORTANT TIPS:
     * You should not answer the user's question, your task is to configure the environment within the given setup. You need to follow the steps mentioned above and flexibly use various commands. After entering test, ensure that the environment passes the test.
     * You should not answer the user's question, your task is to configure the environment within the given setup. You need to follow the steps mentioned above and flexibly use various commands. After entering test, ensure that the environment passes the test.
     * You should not answer the user's question, your task is to configure the environment within the given setup. You need to follow the steps mentioned above and flexibly use various commands. After entering test, ensure that the environment passes the test.
-    * You do not need to complete all the previous steps; you can directly run provided test tools & commands to check if the configuration is complete and get feedback from the error messages. Be flexible. Our goal is to pass the provided test tools & commands checks.
-    * You do not need to complete all the previous steps; you can directly run provided test tools & commands to check if the configuration is complete and get feedback from the error messages. Be flexible. Our goal is to pass the provided test tools & commands checks.
-    * You do not need to complete all the previous steps; you can directly run provided test tools & commands to check if the configuration is complete and get feedback from the error messages. Be flexible. Our goal is to pass the provided test tools & commands checks.
+    * You do not need to complete all the previous steps; you can directly run runtest or poetryruntest to check if the configuration is complete and get feedback from the error messages. Be flexible. Our goal is to pass the runtest or poetryruntest checks.
+    * You do not need to complete all the previous steps; you can directly run runtest or poetryruntest to check if the configuration is complete and get feedback from the error messages. Be flexible. Our goal is to pass the runtest or poetryruntest checks.
+    * You do not need to complete all the previous steps; you can directly run runtest or poetryruntest to check if the configuration is complete and get feedback from the error messages. Be flexible. Our goal is to pass the runtest or poetryruntest checks.
     * Passing tests by modifying testing functions is not allowed, and you should figure out how to make the current test functions run successfully!!!
     * Passing tests by modifying testing functions is not allowed, and you should figure out how to make the current test functions run successfully!!!
     * Passing tests by modifying testing functions is not allowed, and you should figure out how to make the current test functions run successfully!!!
@@ -360,156 +227,6 @@ VERY IMPORTANT TIPS:
     
     def get_max_turn(self):
         return self.max_turn
-
-    def _get_language_specific_info(self):
-        """Get language-specific dependency and test information"""
-        info = {}
-        
-        # Define language-specific dependency commands
-        dependency_commands = {
-            'python': [
-                ('pipdeptree', 'pipdeptree --json-tree'),
-                ('pip_list', '$pip list --format json$'),
-                ('poetry', 'poetry show --tree --json') # Add poetry support
-            ],
-            'node': [
-                ('npm_list', 'npm list --json'),
-                ('yarn_list', 'yarn list --json'),  # Add yarn support
-                ('pnpm_list', 'pnpm list --json')   # Add pnpm support
-            ],
-            'java': [
-                ('maven_deps', 'mvn dependency:tree -DoutputType=json'),
-                ('gradle_deps', 'gradle dependencies --console=plain') # Add gradle support
-            ],
-            'go': [
-                ('go_list', 'go list -m all -json'),
-                ('go_mod', 'go mod graph')
-            ],
-            'rust': [
-                ('cargo_metadata', 'cargo metadata --format-version=1'),
-                ('cargo_tree', 'cargo tree --format=json')
-            ],
-            'cpp': [
-                ('cmake_deps', 'cmake --trace-expand'), # For CMake projects
-                ('conan_deps', 'conan info .'),        # For Conan package manager
-            ],
-            'csharp': [
-                ('nuget_deps', 'dotnet list package --format json')
-            ]
-        }
-
-        for lang, commands in dependency_commands.items():
-            if lang in self.detected_languages:
-                info[lang] = {'deps': {}}
-                for tool_name, command in commands:
-                    try:
-                        output, return_code = self.sandbox_session.execute(command, [], [])
-                        if return_code == 0:
-                            info[lang]['deps'][tool_name] = output
-                    except Exception as e:
-                        print(f"Error getting {lang} dependency info from {tool_name}: {e}")
-                        continue
-
-        # Add build system detection
-        build_files = {
-            'python': ['setup.py', 'pyproject.toml', 'requirements.txt', 'Pipfile'],
-            'node': ['package.json', 'yarn.lock', 'pnpm-lock.yaml'],
-            'java': ['pom.xml', 'build.gradle', 'build.gradle.kts'],
-            'go': ['go.mod', 'go.work'],
-            'rust': ['Cargo.toml'],
-            'cpp': ['CMakeLists.txt', 'conanfile.txt', 'vcpkg.json'],
-            'csharp': ['*.csproj', '*.sln']
-        }
-
-        # Add version information
-        version_commands = {
-            'python': 'python --version',
-            'node': 'node --version',
-            'java': 'java -version',
-            'go': 'go version',
-            'rust': 'rustc --version',
-            'cpp': ['gcc --version', 'clang --version'],
-            'csharp': 'dotnet --version'
-        }
-
-        # Collect version information
-        for lang, command in version_commands.items():
-            if lang in self.detected_languages:
-                try:
-                    if isinstance(command, list):
-                        for cmd in command:
-                            output, return_code = self.sandbox_session.execute(cmd, [], [])
-                            if return_code == 0:
-                                info[lang]['version'] = output
-                                break
-                    else:
-                        output, return_code = self.sandbox_session.execute(command, [], [])
-                        if return_code == 0:
-                            info[lang]['version'] = output
-                except Exception as e:
-                    print(f"Error getting {lang} version: {e}")
-
-        return info
-
-    def _is_test_file(self, filename):
-        """Check if file is a test file across different languages"""
-        test_patterns = {
-            'python': [r'^test_.*\.py$', r'.*_test\.py$'],
-            'node': [r'.*\.test\.js$', r'.*\.spec\.js$'],
-            'java': [r'.*Test\.java$'],
-            'go': [r'.*_test\.go$'],
-            'rust': [r'.*_test\.rs$'],
-            'cpp': [r'.*_test\.cpp$', r'.*Test\.cpp$'],
-            'csharp': [r'.*Test\.cs$']
-        }
-        
-        for lang, patterns in test_patterns.items():
-            if lang in self.detected_languages:
-                for pattern in patterns:
-                    if re.match(pattern, filename):
-                        return True
-        return False
-
-    def _save_language_and_patch_info(self, waiting_list, conflict_list):
-        """Helper method to save language dependency info and patch information"""
-        try:
-            # Get dependency information for all detected languages
-            lang_info = self._get_language_specific_info()
-            
-            # Save dependency information for each language
-            for lang, info in lang_info.items():
-                lang_dir = f'{self.root_dir}/output/{self.full_name}/{lang}'
-                os.makedirs(lang_dir, exist_ok=True)
-                
-                # Save dependency information
-                if 'deps' in info:
-                    for tool, data in info['deps'].items():
-                        try:
-                            with open(f'{lang_dir}/{tool}.json', 'w') as f:
-                                json.dump(data, f, indent=4)
-                        except Exception as e:
-                            print(f"Error saving {lang} {tool} dependency info: {e}")
-                
-                # Save version information
-                if 'version' in info:
-                    try:
-                        with open(f'{lang_dir}/version.txt', 'w') as f:
-                            f.write(info['version'])
-                    except Exception as e:
-                        print(f"Error saving {lang} version info: {e}")
-
-            # Save patch information if available
-            try:
-                generate_diff, generate_diff_return_code = self.sandbox_session.execute('generate_diff', waiting_list, conflict_list)
-                if len(generate_diff.strip()) > 0 and generate_diff_return_code == 0:
-                    patch_dir = f'{self.root_dir}/output/{self.full_name}/patch'
-                    os.makedirs(patch_dir, exist_ok=True)
-                    with open(f'{patch_dir}/final_patch.diff', 'w') as w0:
-                        w0.write(generate_diff)
-            except Exception as e:
-                print(f"Error saving patch information: {e}")
-        except Exception as e:
-            print(f"Error in _save_language_and_patch_info: {e}")
 
     def run(self, project_path, trajectory, waiting_list, conflict_list):
         print('************** configuration **************')
@@ -563,9 +280,6 @@ VERY IMPORTANT TIPS:
                     continue
                 if command == 'python /home/tools/runtest.py' or command == 'python /home/tools/poetryruntest.py' or command == 'python /home/tools/runpipreqs.py' or command == 'python /home/tools/generate_diff.py' or command == '$pwd$' or command == '$pip list --format json$':
                     continue
-                # Exclude all Python tool commands for dependency analysis
-                if command.startswith('python /home/tools/') and any(x in command for x in ['cargo_deps.py', 'maven_deps.py', 'gradle_deps.py', 'npm_deps.py', 'go_deps.py']):
-                    continue
                 if action_name == 'change_python_version':
                     res_cmd = list()
                     continue
@@ -593,7 +307,7 @@ VERY IMPORTANT TIPS:
             GPT_elasped_time = GPT_end_time - GPT_start_time
             self.outer_commands.append({"GPT_time": GPT_elasped_time})
             configuration_agent = configuration_agent_list
-            cost_tokens += usage.total_tokens
+            cost_tokens += 10 #usage["total_tokens"]
 
             # 将模型回答加入记忆
             assistant_message = {"role": "assistant", "content": configuration_agent}
@@ -614,9 +328,9 @@ VERY IMPORTANT TIPS:
                     self.outer_commands.append({"command": commands[i], "returncode": -2, "time": -1})
                     start_time = time.time()
                     vdb = subprocess.run("df -h | grep '/dev/vdb' | awk '{print $5}'", shell=True, capture_output=True, text=True)
-                    if vdb.stdout.strip() and float(vdb.stdout.strip().split('%')[0]) > 90:
-                        print('Warning! The disk /dev/vdb has occupied over 90% memories!')
-                        sys.exit(3)
+                    # if float(vdb.stdout.strip().split('%')[0]) > 90:
+                    #     print('Warning! The disk /dev/vdb has occupied over 90% memories!')
+                    #     sys.exit(3)
                     
                     # 切换python版本
                     if commands[i].strip().startswith('change_python_version'):
@@ -673,6 +387,42 @@ VERY IMPORTANT TIPS:
                             self.sandbox.commands[-1]["time"] = elasped_time
                         continue
 
+                    # # 切换到其他基础镜像
+                    # if commands[i].strip().startswith('change_base_image'):
+                    #     base_image = commands[i].strip().split('change_base_image')[1].strip().lower()
+                    #     try:
+                    #         sandbox = self.sandbox_session.sandbox.change_base_image(base_image)
+                    #         if not isinstance(sandbox, str):
+                    #             self.sandbox = sandbox
+                    #             self.sandbox_session = self.sandbox.get_session()
+                    #             res = f"You have successfully switched the docker container's base image to {base_image}. If you want to revert to the previous environment, you can enter `change_python_version` followed by the previous python version or `change_base_image` followed by the previous base image name."
+                    #             # 内部指令需要添加一个标志
+                    #             self.sandbox.commands.append({"command": f'change_base_image {base_image}', "returncode": 0, "time": -1})
+                    #             self.image_name = base_image
+                    #             print(res)
+                    #             system_res += res
+                    #         else:
+                    #             print(sandbox)
+                    #             end_time = time.time()
+                    #             elasped_time = end_time - start_time
+                    #             self.outer_commands[-1]["time"] = elasped_time
+                    #             self.outer_commands[-1]["returncode"] = 1
+                    #             if self.sandbox.commands[-1]['command'] == f'change_base_image {base_image}':
+                    #                 self.sandbox.commands[-1]["time"] = elasped_time
+                    #             continue
+                    #     except Exception as e:
+                    #         res = f"Error to change the docker container's base image to {base_image}, the error messages are: {e}"
+                    #         print(res)
+                    #         self.outer_commands[-1]["returncode"] = 1
+                    #         system_res += res
+                    #     end_time = time.time()
+                    #     elasped_time = end_time - start_time
+                    #     self.outer_commands[-1]["time"] = elasped_time
+                    #     self.outer_commands[-1]["returncode"] = 0
+                    #     if self.sandbox.commands[-1]['command'] == f'change_base_image {base_image}':
+                    #         self.sandbox.commands[-1]["time"] = elasped_time
+                    #     continue
+
                     sandbox_res, return_code =  self.sandbox_session.execute(commands[i], waiting_list, conflict_list)
                     sandbox_res = res_truncate(sandbox_res)
                     system_res += sandbox_res
@@ -686,8 +436,39 @@ VERY IMPORTANT TIPS:
                     if TIME_OUT_LABEL in sandbox_res:
                         self.sandbox_session = self.sandbox.get_session()
                         self.outer_commands[-1]["returncode"] = 1
-                    if 'Congratulations' in sandbox_res:  # Generic success condition
-                        self._save_language_and_patch_info(waiting_list, conflict_list)  # Keep this call for successful completion
+                    if 'Congratulations, you have successfully configured the environment!' in sandbox_res and '# This is $runtest.py$' not in sandbox_res:
+                        try:
+                            pipdeptree_json, pipdeptree_json_return_code =  self.sandbox_session.execute('pipdeptree --json-tree', waiting_list, conflict_list)
+                        except:
+                            pipdeptree_json_return_code = -1
+                        try:
+                            pipdeptree_normal, pipdeptree_normal_return_code = self.sandbox_session.execute('pipdeptree', waiting_list, conflict_list)
+                        except:
+                            pipdeptree_normal_return_code = -1
+                        try:
+                            generate_diff, generate_diff_return_code = self.sandbox_session.execute('generate_diff', waiting_list, conflict_list)
+                        except:
+                            generate_diff_return_code = -1
+                        try:
+                            pip_list, pip_list_return_code = self.sandbox_session.execute('$pip list --format json$', waiting_list, conflict_list)
+                        except:
+                            pip_list_return_code = -1
+
+                        if len(generate_diff.strip()) > 0 and generate_diff_return_code == 0:
+                            if not os.path.exists(f'{self.root_dir}/output/{self.full_name}/patch'):
+                                os.system(f'mkdir {self.root_dir}/output/{self.full_name}/patch')
+                            with open(f'{self.root_dir}/output/{self.full_name}/patch/final_patch.diff', 'w') as w0:
+                                w0.write(generate_diff)
+                        if pipdeptree_json_return_code == 0:
+                            with open(f'{self.root_dir}/output/{self.full_name}/pipdeptree.json', 'w') as w1:
+                                w1.write(pipdeptree_json)
+                        if pipdeptree_normal_return_code == 0:
+                            with open(f'{self.root_dir}/output/{self.full_name}/pipdeptree.txt', 'w') as w2:
+                                w2.write(pipdeptree_normal)
+                        if pip_list_return_code == 0:
+                            with open(f'{self.root_dir}/output/{self.full_name}/pip_list.json', 'w') as w2:
+                                w2.write(json.dumps(json.loads(pip_list), indent=4))
+
                         print(sandbox_res)
                         with open(f'{self.root_dir}/output/{self.full_name}/test.txt', 'w') as w3:
                             w3.write('\n'.join(sandbox_res.splitlines()[1:]))
@@ -696,12 +477,9 @@ VERY IMPORTANT TIPS:
                 if finish:
                     break
             elif len(diffs) != 0:
-                filename = diffs.split('<<<<<<< SEARCH')[0].split('/')[-1].strip()
-                if self._is_test_file(filename):
+                if diffs.split('<<<<<<< SEARCH')[0].split('/')[-1].strip().startswith('test_') or diffs.split('<<<<<<< SEARCH')[0].split('/')[-1].strip().endswith('_test.py'):
                     self.outer_commands.append({"diff": diffs, "returncode": -2, "time": -1})
-                    system_res += ('Running Edit...\n' + 
-                                  f"You are trying to modify test file {filename}, but modifying test files is not allowed. " +
-                                  "Please consider alternative solutions.\n")
+                    system_res += 'Running Edit...\n' + f"You are trying to modify file {diffs.split('<<<<<<< SEARCH')[0].split('/')[-1].strip()}, but we require that you should not modify the testing files. Please consider alternative solutions." + '\n'
                 else:
                     self.outer_commands.append({"diff": diffs, "returncode": -2, "time": -1})
                     start_time = time.time()
@@ -753,7 +531,7 @@ The edit format is as follows:
 
 
             if len(success_cmds) > 0:
-                appendix = '\nThe container has successfully executed the following commands in order. Please refer to the execution history, reflect, and decide the subsequent actions. Remember, your ultimate goal is to pass the tests by executing the provided test commands.\n' + \
+                appendix = '\nThe container has successfully executed the following commands in order. Please refer to the execution history, reflect, and decide the subsequent actions. Remember, your ultimate goal is to pass the tests by executing `runtest` or `poetryruntest`.\n' + \
                     '\n'.join(success_cmds)
             else:
                 appendix = '\nThe container remains in its original state.'
@@ -778,6 +556,38 @@ The edit format is as follows:
                 w1.write(json.dumps(self.sandbox.commands, indent=4))
             print(system_res)
 
+            try:
+                pipdeptree_json, pipdeptree_json_return_code =  self.sandbox_session.execute('pipdeptree --json-tree', waiting_list, conflict_list)
+            except:
+                pipdeptree_json_return_code = -1
+            try:
+                pipdeptree_normal, pipdeptree_normal_return_code = self.sandbox_session.execute('pipdeptree', waiting_list, conflict_list)
+            except:
+                pipdeptree_normal_return_code = -1
+            try:
+                generate_diff, generate_diff_return_code = self.sandbox_session.execute('generate_diff', waiting_list, conflict_list)
+            except:
+                generate_diff_return_code = -1
+            try:
+                pip_list, pip_list_return_code = self.sandbox_session.execute('$pip list --format json$', waiting_list, conflict_list)
+            except:
+                pip_list_return_code = -1
+
+            if len(generate_diff.strip()) > 0 and generate_diff_return_code == 0:
+                if not os.path.exists(f'{self.root_dir}/output/{self.full_name}/patch'):
+                    os.system(f'mkdir {self.root_dir}/output/{self.full_name}/patch')
+                with open(f'{self.root_dir}/output/{self.full_name}/patch/final_patch.diff', 'w') as w0:
+                    w0.write(generate_diff)
+            if pipdeptree_json_return_code == 0:
+                with open(f'{self.root_dir}/output/{self.full_name}/pipdeptree.json', 'w') as w1:
+                    w1.write(pipdeptree_json)
+            if pipdeptree_normal_return_code == 0:
+                with open(f'{self.root_dir}/output/{self.full_name}/pipdeptree.txt', 'w') as w2:
+                    w2.write(pipdeptree_normal)
+            if pip_list_return_code == 0:
+                with open(f'{self.root_dir}/output/{self.full_name}/pip_list.json', 'w') as w2:
+                    w2.write(json.dumps(json.loads(pip_list), indent=4))
+        
         append_trajectory(trajectory, self.messages, 'configuration')
         end_time0 = time.time()
         cost_time = end_time0 - start_time0

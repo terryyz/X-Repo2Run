@@ -1,0 +1,68 @@
+[
+    {
+        "GPT_time": 1.2081177234649658
+    },
+    {
+        "command": "ls /repo",
+        "returncode": 0,
+        "time": 0.7575955390930176
+    },
+    {
+        "GPT_time": 1.8576841354370117
+    },
+    {
+        "command": "cat /repo/a1.py",
+        "returncode": 0,
+        "time": 0.6692054271697998
+    },
+    {
+        "GPT_time": 1.4462552070617676
+    },
+    {
+        "command": "cat /repo/model.py",
+        "returncode": 0,
+        "time": 0.6620078086853027
+    },
+    {
+        "GPT_time": 1.9678955078125
+    },
+    {
+        "command": "waitinglist add -p flask",
+        "returncode": 0,
+        "time": 1.7915027141571045
+    },
+    {
+        "command": "waitinglist add -p flask_restful",
+        "returncode": 0,
+        "time": 1.7689318656921387
+    },
+    {
+        "GPT_time": 1.4420440196990967
+    },
+    {
+        "command": "waitinglist add -p flask -t pip",
+        "returncode": 0,
+        "time": 0.0057299137115478516
+    },
+    {
+        "command": "waitinglist add -p flask_restful -t pip",
+        "returncode": 0,
+        "time": 0.005201101303100586
+    },
+    {
+        "GPT_time": 1.342067003250122
+    },
+    {
+        "command": "download",
+        "returncode": 0,
+        "time": 7.044512033462524
+    },
+    {
+        "GPT_time": 1.3255856037139893
+    },
+    {
+        "command": "runtest",
+        "returncode": 0,
+        "time": 2.2676916122436523
+    }
+]

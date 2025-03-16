@@ -21,9 +21,8 @@ import os
 import glob
 import re
 import sys
-import json
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from parser.parse_command import match_download, match_runpipreqs, match_runtest, match_poetryruntest, match_conflict_solve, match_waitinglist_add, match_waitinglist_addfile, match_conflictlist_clear, match_waitinglist_clear, match_waitinglist_show, match_conflictlist_show, match_clear_configuration, match_cargo_deps, match_maven_deps, match_gradle_deps, match_npm_deps, match_go_deps, match_npm_build, match_maven_build, match_gradle_build, match_cargo_build, match_go_build, match_cmake_build, match_jest_test, match_junit_test, match_cargo_test, match_go_test, match_change_python_version
+from parser.parse_command import match_download, match_runpipreqs, match_runtest, match_poetryruntest, match_conflict_solve, match_waitinglist_add, match_waitinglist_addfile, match_conflictlist_clear, match_waitinglist_clear, match_waitinglist_show, match_conflictlist_show, match_clear_configuration
 from download import download
 from outputcollector import OutputCollector
 from show_msg import show_msg
@@ -100,58 +99,6 @@ def compare_versions(version1, version2):
     return 0
 
 class Sandbox:
-    # Supported languages and their file extensions
-    LANGUAGE_EXTENSIONS = {
-        'python': ['.py', '.pyw', 'requirements.txt', 'pyproject.toml', 'Pipfile'],
-        'javascript': ['.js', '.jsx', '.ts', '.tsx', 'package.json', 'yarn.lock', 'pnpm-lock.yaml'],
-        'java': ['.java', 'pom.xml', 'build.gradle', 'build.gradle.kts'],
-        'go': ['.go', 'go.mod', 'go.sum', 'Gopkg.toml'],
-        'ruby': ['.rb', 'Gemfile', 'Gemfile.lock'],
-        'php': ['.php', 'composer.json', 'composer.lock'],
-        'rust': ['.rs', 'Cargo.toml', 'Cargo.lock'],
-        'csharp': ['.cs', '.csproj', '.sln'],
-        'cpp': ['.cpp', '.hpp', '.cc', '.hh', 'CMakeLists.txt', 'conanfile.txt'],
-        'c': ['.c', '.h', 'Makefile']
-    }
-
-    # Package manager commands for different languages
-    PACKAGE_MANAGERS = {
-        'python': {
-            'poetry': {'install': 'poetry install', 'add': 'poetry add'},
-            'pip': {'install': 'pip install -r requirements.txt', 'add': 'pip install'},
-            'pipenv': {'install': 'pipenv install', 'add': 'pipenv install'}
-        },
-        'javascript': {
-            'npm': {'install': 'npm install', 'add': 'npm install'},
-            'yarn': {'install': 'yarn install', 'add': 'yarn add'},
-            'pnpm': {'install': 'pnpm install', 'add': 'pnpm add'}
-        },
-        'java': {
-            'maven': {'install': 'mvn install', 'add': 'mvn dependency:get -Dartifact='},
-            'gradle': {'install': 'gradle build', 'add': 'gradle --refresh-dependencies'}
-        },
-        'go': {
-            'go': {'install': 'go mod download', 'add': 'go get'},
-            'dep': {'install': 'dep ensure', 'add': 'dep ensure -add'}
-        },
-        'ruby': {
-            'bundler': {'install': 'bundle install', 'add': 'bundle add'}
-        },
-        'php': {
-            'composer': {'install': 'composer install', 'add': 'composer require'}
-        },
-        'rust': {
-            'cargo': {'install': 'cargo build', 'add': 'cargo add'}
-        },
-        'csharp': {
-            'dotnet': {'install': 'dotnet restore', 'add': 'dotnet add package'}
-        },
-        'cpp': {
-            'conan': {'install': 'conan install .', 'add': 'conan install'},
-            'vcpkg': {'install': 'vcpkg install', 'add': 'vcpkg install'}
-        }
-    }
-
     def __init__(self, namespace, repo_full_name, root_path):
         self.namespace = namespace
         self.client = docker.from_env(timeout=600)
@@ -160,125 +107,52 @@ class Sandbox:
         self.commands = list()
         self.full_name = repo_full_name
         self.root_path = root_path
-        self.detected_languages = set()
-        self.language_stats = {}  # Track language usage statistics
-        self.language_managers = {}  # Store package managers for each detected language
-        self.build_configs = {}  # Store build configurations for each language
     
     def generate_dockerfile(self):
-        # Base universal Dockerfile content that supports multiple languages
-        dockerfile_content = """FROM ubuntu:focal-20231211
+        if not self.namespace.lower().strip().split(':')[0] == 'python':
+            dockerfile_content = f"""FROM {self.namespace}
 
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y curl npm git nano wget vim unzip sudo cgroup-tools iproute2 iptables \
-autoconf gperf flex bison \
-bc \
-&& mkdir -p /workspace/download
+RUN mkdir -p ~/.pip && touch ~/.pip/pip.conf
+RUN echo "[global]" >> ~/.pip/pip.conf && echo "[install]" >> ~/.pip/pip.conf
 
-# Python environment setup with package managers
-RUN apt-get install -y python3-pip python3-dev
-RUN pip3 install pytest pipdeptree
-# Poetry installation
-RUN curl -sSL https://install.python-poetry.org
+        """
+
+        elif compare_versions(self.namespace.lower().strip().split(':')[1].strip(), '3.8') >= 0:
+            # poetry必须要python3.8及以上
+            dockerfile_content = f"""FROM {self.namespace}
+RUN mkdir -p ~/.pip && touch ~/.pip/pip.conf
+RUN echo "[global]" >> ~/.pip/pip.conf && echo "[install]" >> ~/.pip/pip.conf
+
+# 安装必要的系统依赖
+RUN apt-get update && apt-get install -y curl
+
+# 安装 Poetry
+RUN curl -sSL https://install.python-poetry.org | python -
+# 将 Poetry 的 bin 目录添加到 PATH 环境变量
 ENV PATH="/root/.local/bin:$PATH"
-# Pipenv installation
-RUN pip3 install pipenv
-# Conda installation
-RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /workspace/download/miniconda.sh \\
-    && bash /workspace/download/miniconda.sh -b -p /opt/conda \\
-    && rm /workspace/download/miniconda.sh
-ENV PATH="/opt/conda/bin:$PATH"
 
-# golang 1.23.3
-RUN curl -o /workspace/download/go.tar.gz -SL https://go.dev/dl/go1.23.3.linux-amd64.tar.gz \
-    && tar -zxf /workspace/download/go.tar.gz -C /usr/local && rm /workspace/download/go.tar.gz
-ENV PATH=/bin:/usr/local/go/bin:$PATH
+RUN pip install pytest
 
-# nodejs 20.11.0
-RUN curl -o /workspace/download/node.tar.gz -SL https://nodejs.org/dist/v20.11.0/node-v20.11.0-linux-x64.tar.gz \
-    && mkdir -p /usr/local/lib/nodejs && tar -zxf /workspace/download/node.tar.gz -C /usr/local/lib/nodejs && mv /usr/local/lib/nodejs/node-v20.11.0-linux-x64 /usr/local/lib/nodejs/node \
-    && rm /workspace/download/node.tar.gz
-ENV PATH=/usr/local/lib/nodejs/node/bin:$PATH
-ENV NODE_PATH=/usr/local/lib/node_modules
-RUN npm install -g typescript@5.3.3 tsx@4.7.1 jest
+RUN pip install pipdeptree
 
-# gcc 9
-RUN sudo apt-get install -y build-essential && sudo apt-get install -y g++
-
-# jdk 21
-RUN curl -o /workspace/download/jdk.tar.gz -SL https://download.oracle.com/java/21/latest/jdk-21_linux-x64_bin.tar.gz \
-    && mkdir /usr/java && tar -zxf /workspace/download/jdk.tar.gz -C /usr/java && rm /workspace/download/jdk.tar.gz \
-    && java_path=`ls /usr/java/${path}` && echo "export JAVA_HOME=/usr/java/${java_path}" >> ~/.profile
-RUN wget -O ~/gradle-4.2.1-bin.zip https://services.gradle.org/distributions/gradle-4.2.1-bin.zip && sudo apt-get install unzip && sudo mkdir /opt/gradle && sudo unzip -d /opt/gradle ~/gradle-4.2.1-bin.zip && rm ~/gradle-4.2.1-bin.zip && echo "export PATH=\$PATH:/opt/gradle/gradle-4.2.1/bin" >> ~/.bashrc
-RUN echo "export PATH=\$PATH:/opt/gradle/gradle-4.2.1/bin" >> ~/.bashrc
-    
-# dotnet 8.0
-RUN wget https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb \
-    && dpkg -i packages-microsoft-prod.deb && rm packages-microsoft-prod.deb \
-    && apt-get update \
-    && apt-get install -y dotnet-sdk-8.0
-
-# php 7.4.3
-RUN apt-get install -y php-cli=2:7.4+75
-
-# rust
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain 1.76.0
-ENV PATH="/root/.cargo/bin:${PATH}"
-
-# R, lua, ruby, julia, perl, scala
-RUN apt-get install -y r-base lua5.2 luarocks ruby-full julia scala \
-    && luarocks install luaunit \
-    && PERL_MM_USE_DEFAULT=1 cpan Test::Deep Data::Compare
-
-SHELL ["sh", "-lc"]
-RUN update-alternatives --install /usr/bin/java java $JAVA_HOME/bin/java 20000 \
-    && update-alternatives --install /usr/bin/javac javac $JAVA_HOME/bin/javac 20000 \
-    && rm -r /workspace/download \
-    && env
-"""
-
+RUN mkdir -p /repo && git config --global --add safe.directory /repo
         """
-        # D
-        RUN wget https://netcologne.dl.sourceforge.net/project/d-apt/files/d-apt.list -O /etc/apt/sources.list.d/d-apt.list \
-            && apt-get update --allow-insecure-repositories -y \
-            && apt-get -y --allow-unauthenticated install --reinstall d-apt-keyring \
-            && apt-get update && apt-get install -y dmd-compiler dub
+        else:
+            dockerfile_content = f"""FROM {self.namespace}
 
-        # kotlin
-        RUN curl -o /tmp/kotlin-compiler.zip -SL https://github.com/JetBrains/kotlin/releases/download/v2.0.0/kotlin-compiler-2.0.0.zip \
-            && mkdir /usr/local/kotlin && unzip /tmp/kotlin-compiler.zip -d /usr/local/kotlin \
-            && rm -f /tmp/kotlin-compiler.zip
-        ENV PATH=/usr/local/kotlin/kotlinc/bin:$PATH
 
-        # iverilog && verilog-eval (TODO: remove verilog-eval)
-        RUN cd /workspace \
-            && git clone https://github.com/steveicarus/iverilog.git && cd iverilog \
-            && git checkout 01441687235135d1c12eeef920f75d97995da333 \
-            && sh ./autoconf.sh && ./configure && make -j4 \
-            && make install \
-            && cd /workspace \
-            && git clone https://github.com/NVlabs/verilog-eval \
-            && cd verilog-eval && git checkout 4b9b16e92f1d9cc520afbfa3ecd5a2f20a350fd5 \
-            && sed -i '79d;112d' ./verilog_eval/execution.py \
-            && cd ../ && pip install -e verilog-eval
+RUN mkdir -p ~/.pip && touch ~/.pip/pip.conf
+RUN echo "[global]" >> ~/.pip/pip.conf && echo "[install]" >> ~/.pip/pip.conf
 
-        # lean 4
-        RUN curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain leanprover/lean4:v4.10.0-rc2
-        ENV PATH=/root/.elan/bin:$PATH
+# 安装必要的系统依赖
+RUN apt-get update && apt-get install -y curl
 
-        # Racket
-        RUN apt-get update --allow-insecure-repositories -y && apt-get install -y racket
+RUN pip install pytest
 
-        # Swift
-        RUN curl -o /workspace/download/swift.tar.gz -SL https://download.swift.org/swift-5.10.1-release/ubuntu2004/swift-5.10.1-RELEASE/swift-5.10.1-RELEASE-ubuntu20.04.tar.gz \
-            && cd /workspace/download \
-            && tar zxf swift.tar.gz \
-            && mkdir /usr/local/swift \
-            && mv swift-5.10.1-RELEASE-ubuntu20.04/usr/* /usr/local/swift \
-            && rm -f /workspace/download/swift.tar.gz
-        ENV PATH=/usr/local/swift/bin:$PATH
+RUN pip install pipdeptree
+
+RUN mkdir -p /repo && git config --global --add safe.directory /repo
         """
-
         dockerfile_path = f'{self.root_path}/utils/repo/{self.full_name}/Dockerfile'
         with open(dockerfile_path, "w") as f:
             f.write(dockerfile_content)
@@ -381,198 +255,12 @@ RUN update-alternatives --install /usr/bin/java java $JAVA_HOME/bin/java 20000 \
         project_path = self.container.exec_run("pwd").output.decode().strip()
         return project_path
     
-    def detect_languages(self):
-        """Enhanced language detection with usage statistics."""
-        try:
-            repo_path = f'{self.root_path}/utils/repo/{self.full_name}/repo'
-            language_files = {lang: [] for lang in self.LANGUAGE_EXTENSIONS.keys()}
-            
-            for root, _, files in os.walk(repo_path):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    for lang, extensions in self.LANGUAGE_EXTENSIONS.items():
-                        if any(file.endswith(ext) for ext in extensions):
-                            self.detected_languages.add(lang)
-                            language_files[lang].append(file_path)
-                            
-                            # Check for build and config files
-                            if file in ['pyproject.toml', 'setup.py', 'requirements.txt'] or file.endswith('.py'):
-                                self.build_configs['python'] = self.build_configs.get('python', file)
-                            elif file in ['package.json', 'tsconfig.json'] or any(file.endswith(ext) for ext in ['.js', '.jsx', '.ts', '.tsx']):
-                                self.build_configs['javascript'] = self.build_configs.get('javascript', file)
-                            elif file in ['pom.xml', 'build.gradle'] or file.endswith('.java'):
-                                self.build_configs['java'] = self.build_configs.get('java', file)
-                            elif file == 'go.mod' or file.endswith('.go'):
-                                self.build_configs['go'] = self.build_configs.get('go', file)
-                            elif file == 'Cargo.toml' or file.endswith('.rs'):
-                                self.build_configs['rust'] = self.build_configs.get('rust', file)
-                            elif file == 'CMakeLists.txt' or any(file.endswith(ext) for ext in ['.cpp', '.hpp', '.cc', '.hh']):
-                                self.build_configs['cpp'] = self.build_configs.get('cpp', file)
-            
-            # Calculate language statistics
-            total_files = sum(len(files) for files in language_files.values())
-            self.language_stats = {
-                lang: {
-                    'files': len(files),
-                    'percentage': (len(files) / total_files * 100) if total_files > 0 else 0,
-                    'config_files': [os.path.basename(f) for f in files if any(
-                        f.endswith(conf) for conf in [
-                            'requirements.txt', 'setup.py', 'pyproject.toml',  # Python
-                            'package.json', 'tsconfig.json',                   # JavaScript
-                            'pom.xml', 'build.gradle',                        # Java
-                            'go.mod', 'Gopkg.toml',                          # Go
-                            'Gemfile', 'Cargo.toml', 'composer.json'         # Others
-                        ]
-                    )]
-                }
-                for lang, files in language_files.items() if len(files) > 0
-            }
-            
-            return self.detected_languages
-        except Exception as e:
-            print(f"Error detecting languages: {e}")
-            return set()
-
-    def setup_package_managers(self):
-        """Set up package managers for all detected languages."""
-        for lang in self.detected_languages:
-            # Get default package manager for the language
-            default_manager = {
-                'python': 'pip',
-                'javascript': 'npm',
-                'java': 'maven',
-                'go': 'go',
-                'ruby': 'bundler',
-                'php': 'composer',
-                'rust': 'cargo',
-                'csharp': 'dotnet',
-                'cpp': 'conan'
-            }.get(lang)
-            
-            # Check for language-specific config files
-            config_files = {
-                'pyproject.toml': ('python', 'poetry'),
-                'Pipfile': ('python', 'pipenv'),
-                'package-lock.json': ('javascript', 'npm'),
-                'yarn.lock': ('javascript', 'yarn'),
-                'pnpm-lock.yaml': ('javascript', 'pnpm'),
-                'pom.xml': ('java', 'maven'),
-                'build.gradle': ('java', 'gradle'),
-                'Gopkg.toml': ('go', 'dep'),
-                'Gemfile': ('ruby', 'bundler'),
-                'composer.json': ('php', 'composer'),
-                'Cargo.toml': ('rust', 'cargo'),
-                'conanfile.txt': ('cpp', 'conan')
-            }
-            
-            repo_path = f'{self.root_path}/utils/repo/{self.full_name}/repo'
-            manager_set = False
-            
-            for config_file, (config_lang, manager) in config_files.items():
-                if config_lang == lang and os.path.exists(os.path.join(repo_path, config_file)):
-                    self.language_managers[lang] = manager
-                    manager_set = True
-                    break
-            
-            if not manager_set:
-                self.language_managers[lang] = default_manager
-
-    def install_all_dependencies(self):
-        """Install dependencies for all detected languages."""
-        results = {}
-        for lang in self.detected_languages:
-            if lang in self.language_managers:
-                manager = self.language_managers[lang]
-                try:
-                    install_cmd = self.PACKAGE_MANAGERS[lang][manager]['install']
-                    result = self.container.exec_run(f"cd /repo && {install_cmd}")
-                    results[lang] = {
-                        'success': result.exit_code == 0,
-                        'output': result.output.decode('utf-8'),
-                        'manager': manager
-                    }
-                except Exception as e:
-                    results[lang] = {
-                        'success': False,
-                        'error': str(e),
-                        'manager': manager
-                    }
-        return results
-
-    def build_project(self):
-        """Build the project for all detected languages."""
-        build_results = {}
-        
-        # Language-specific build commands
-        build_commands = {
-            'python': {
-                'poetry': 'poetry build',
-                'pip': 'python setup.py build',
-                'pipenv': 'pipenv run python setup.py build'
-            },
-            'javascript': {
-                'npm': 'npm run build',
-                'yarn': 'yarn build',
-                'pnpm': 'pnpm build'
-            },
-            'java': {
-                'maven': 'mvn package',
-                'gradle': 'gradle build'
-            },
-            'go': {
-                'go': 'go build ./...',
-                'dep': 'dep ensure && go build ./...'
-            },
-            'rust': {
-                'cargo': 'cargo build'
-            },
-            'cpp': {
-                'cmake': 'cmake . && make',
-                'conan': 'conan build .'
-            }
-        }
-        
-        for lang in self.detected_languages:
-            if lang in self.language_managers and lang in build_commands:
-                manager = self.language_managers[lang]
-                if manager in build_commands[lang]:
-                    try:
-                        build_cmd = build_commands[lang][manager]
-                        result = self.container.exec_run(f"cd /repo && {build_cmd}")
-                        build_results[lang] = {
-                            'success': result.exit_code == 0,
-                            'output': result.output.decode('utf-8'),
-                            'command': build_cmd
-                        }
-                    except Exception as e:
-                        build_results[lang] = {
-                            'success': False,
-                            'error': str(e),
-                            'command': build_cmd
-                        }
-        
-        return build_results
-
-
     # 开启一个新的Container，返回1表示创建成功，返回-1表示创建失败
     def start_container(self, base_image=False):
         if not base_image:
             success = self.build_image()
-            if success == 1:
-                # Detect languages and set up package managers
-                self.detect_languages()
-                self.setup_package_managers()
-                
-                # Print language statistics
-                print("\n=== Project Language Analysis ===")
-                for lang, stats in self.language_stats.items():
-                    if stats['files'] > 0:
-                        print(f"\n{lang.upper()}:")
-                        print(f"  Files: {stats['files']} ({stats['percentage']:.1f}%)")
-                        if stats['config_files']:
-                            print(f"  Config files: {', '.join(stats['config_files'])}")
-                        print(f"  Package manager: {self.language_managers.get(lang, 'None')}")
-            else:
+            if not success:
+                # sys.exit(1)
                 raise Exception('Build image error!')
         image = f"{self.namespace}"
         host_path = '/tmp/patch'
@@ -587,40 +275,21 @@ RUN update-alternatives --install /usr/bin/java java $JAVA_HOME/bin/java 20000 \
                 volumes={host_path: {'bind': container_path, 'mode': 'rw'}}
                 )
 
-            print(f"\033[94mContainer {self.container.name} {self.container.short_id} started with image {image}\033[0m")
+            print(f"Container {self.container.name} {self.container.short_id} started with image {image}")
             
             current_file_path = os.path.abspath(__file__)
             current_directory = os.path.dirname(current_file_path)
             project_directory = os.path.dirname(current_directory)
             
-            # Copy tools directory
             cmd = f"chmod -R 777 {project_directory}/tools && docker cp {project_directory}/tools {self.container.name}:/home"
             subprocess.run(cmd, check=True, shell=True)
 
-            # Debug: Check source directory before copy
-            print(f"\033[93mChecking source directory...\033[0m")
-            source_path = f"{project_directory}/utils/repo/{self.full_name}/repo"
-            ls_source = subprocess.run(f"ls -la {source_path}", shell=True, capture_output=True, text=True)
-            print(f"\033[92mSource directory contents:\n{ls_source.stdout}\033[0m")
-
-            # Copy repo directory
-            print(f"\033[93mCopying repository to container...\033[0m")
-            repo_cmd = f"docker cp {source_path} {self.container.name}:/"
-            result = subprocess.run(repo_cmd, shell=True, capture_output=True, text=True)
-            
-            if result.returncode == 0:
-                print(f"\033[92mRepository copy successful!\033[0m")
-            else:
-                print(f"\033[91mRepository copy failed: {result.stderr}\033[0m")
-
-            # Debug: Check destination directory after copy
-            print(f"\033[93mVerifying /repo contents in container...\033[0m")
-            ls_dest = subprocess.run(f"docker exec {self.container.name} ls -la /repo", shell=True, capture_output=True, text=True)
-            print(f"\033[92mContainer /repo contents:\n{ls_dest.stdout}\033[0m")
-
+            # 把utils/repo中的内容复制到根目录/中
+            cmd = f"docker cp {project_directory}/utils/repo/{self.full_name}/repo {self.container.name}:/"
+            subprocess.run(cmd, check=True, shell=True)
             return 1
         except Exception as e:
-            print(f"\033[91mContainer start failed: {e}\033[0m")
+            print(f"Container start faild: {e}")
             return -1
 
     # 开启一个shell
@@ -828,36 +497,6 @@ RUN update-alternatives --install /usr/bin/java java $JAVA_HOME/bin/java 20000 \
                             command = 'python /home/tools/runpipreqs.py'
                         if command == 'generate_diff':
                             command = 'python /home/tools/generate_diff.py'
-                        if match_cargo_deps(command):
-                            command = 'python /home/tools/cargo_deps.py'
-                        if match_maven_deps(command):
-                            command = 'python /home/tools/maven_deps.py'
-                        if match_gradle_deps(command):
-                            command = 'python /home/tools/gradle_deps.py'
-                        if match_npm_deps(command):
-                            command = 'python /home/tools/npm_deps.py'
-                        if match_go_deps(command):
-                            command = 'python /home/tools/go_deps.py'
-                        if match_npm_build(command):
-                            command = 'python /home/tools/npm_build.py'
-                        if match_maven_build(command):
-                            command = 'python /home/tools/maven_build.py'
-                        if match_gradle_build(command):
-                            command = 'python /home/tools/gradle_build.py'
-                        if match_cargo_build(command):
-                            command = 'python /home/tools/cargo_build.py'
-                        if match_go_build(command):
-                            command = 'python /home/tools/go_build.py'
-                        if match_cmake_build(command):
-                            command = 'python /home/tools/cmake_build.py'
-                        if match_jest_test(command):
-                            command = 'python /home/tools/jest_test.py'
-                        if match_junit_test(command):
-                            command = 'python /home/tools/junit_test.py'
-                        if match_cargo_test(command):
-                            command = 'python /home/tools/cargo_test.py'
-                        if match_go_test(command):
-                            command = 'python /home/tools/go_test.py'
                         if command[-1] != '&':
                             if not (command.split()[0].strip() in safe_cmd and '>' not in command):
                                 self.sandbox.commit_container()
@@ -941,103 +580,11 @@ Explanation: Clear all the items in the waiting list.'''
                         result_message = '\n'.join(output_lines)
                         if 'Congratulations, you have successfully configured the environment!' in result_message or command == 'python /home/tools/generate_diff.py'\
                             or command == 'pipdeptree --json-tree' or command == 'pipdeptree':
-                            # Python dependencies
-                            try:
-                                pipdeptree_json, pipdeptree_json_return_code = self.execute('pipdeptree --json-tree', waiting_list, conflict_list)
-                            except:
-                                pipdeptree_json_return_code = -1
-                            try:
-                                pipdeptree_normal, pipdeptree_normal_return_code = self.execute('pipdeptree', waiting_list, conflict_list)
-                            except:
-                                pipdeptree_normal_return_code = -1
-                            try:
-                                generate_diff, generate_diff_return_code = self.execute('generate_diff', waiting_list, conflict_list)
-                            except:
-                                generate_diff_return_code = -1
-                            try:
-                                pip_list, pip_list_return_code = self.execute('$pip list --format json$', waiting_list, conflict_list)
-                            except:
-                                pip_list_return_code = -1
-
-                            # Node.js dependencies
-                            try:
-                                npm_list, npm_list_return_code = self.execute('npm list --json', waiting_list, conflict_list)
-                            except:
-                                npm_list_return_code = -1
-                            try:
-                                yarn_list, yarn_list_return_code = self.execute('yarn list --json', waiting_list, conflict_list)
-                            except:
-                                yarn_list_return_code = -1
-
-                            # Java dependencies
-                            try:
-                                mvn_deps, mvn_deps_return_code = self.execute('mvn dependency:tree -DoutputType=dot', waiting_list, conflict_list)
-                            except:
-                                mvn_deps_return_code = -1
-                            try:
-                                gradle_deps, gradle_deps_return_code = self.execute('gradle dependencies', waiting_list, conflict_list)
-                            except:
-                                gradle_deps_return_code = -1
-
-                            # Rust dependencies
-                            try:
-                                cargo_deps, cargo_deps_return_code = self.execute('cargo tree --format=json', waiting_list, conflict_list)
-                            except:
-                                cargo_deps_return_code = -1
-
-                            # Go dependencies
-                            try:
-                                go_list, go_list_return_code = self.execute('go list -m -json all', waiting_list, conflict_list)
-                            except:
-                                go_list_return_code = -1
-
-                            # Save dependency information
-                            output_dir = f'{self.sandbox.root_path}/output/{self.sandbox.full_name}'
-                            os.makedirs(output_dir, exist_ok=True)
-                            os.makedirs(f'{output_dir}/patch', exist_ok=True)
-
-                            # Save Python dependencies
-                            if len(generate_diff.strip()) > 0 and generate_diff_return_code == 0:
-                                with open(f'{output_dir}/patch/final_patch.diff', 'w') as w0:
-                                    w0.write(generate_diff)
-                            if pipdeptree_json_return_code == 0:
-                                with open(f'{output_dir}/pipdeptree.json', 'w') as w1:
-                                    w1.write(pipdeptree_json)
-                            if pipdeptree_normal_return_code == 0:
-                                with open(f'{output_dir}/pipdeptree.txt', 'w') as w2:
-                                    w2.write(pipdeptree_normal)
-                            if pip_list_return_code == 0:
-                                with open(f'{output_dir}/pip_list.json', 'w') as w2:
-                                    w2.write(json.dumps(json.loads(pip_list), indent=4))
-
-                            # Save Node.js dependencies
-                            if npm_list_return_code == 0:
-                                with open(f'{output_dir}/npm_list.json', 'w') as w:
-                                    w.write(npm_list)
-                            if yarn_list_return_code == 0:
-                                with open(f'{output_dir}/yarn_list.json', 'w') as w:
-                                    w.write(yarn_list)
-
-                            # Save Java dependencies
-                            if mvn_deps_return_code == 0:
-                                with open(f'{output_dir}/maven_deps.dot', 'w') as w:
-                                    w.write(mvn_deps)
-                            if gradle_deps_return_code == 0:
-                                with open(f'{output_dir}/gradle_deps.txt', 'w') as w:
-                                    w.write(gradle_deps)
-
-                            # Save Rust dependencies
-                            if cargo_deps_return_code == 0:
-                                with open(f'{output_dir}/cargo_deps.json', 'w') as w:
-                                    w.write(cargo_deps)
-
-                            # Save Go dependencies
-                            if go_list_return_code == 0:
-                                with open(f'{output_dir}/go_deps.json', 'w') as w:
-                                    w.write(go_list)
-
-                        return result_message, return_code
-
+                            return result_message, return_code
+                        else:
+                            result_message = f'Running `{command}`...\n' + result_message + '\n'
+                            return truncate_msg(result_message, command), return_code
+                
                 except pexpect.TIMEOUT:
                     if match_runtest(command) or match_poetryruntest(command):
                         os.sytem(f'touch {self.sandbox.root_path}/output/{self.sandbox.full_name}/TIMEOUT')

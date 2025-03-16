@@ -25,6 +25,10 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+code/
+build_agent/utils/reports
+code.zip
+Repo2Run/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

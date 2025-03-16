@@ -1,0 +1,5 @@
+INFO: Not scanning for jupyter notebooks.
+WARNING: Import named "Flask" not found locally. Trying to resolve it at the PyPI server.
+WARNING: Import named "Flask" was resolved to "Flask:3.1.0" package (https://pypi.org/project/Flask/).
+Please, verify manually the final list of requirements.txt to avoid possible dependency confusions.
+INFO: Successfully saved requirements file in .pipreqs/requirements_pipreqs.txt

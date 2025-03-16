@@ -1,0 +1,20 @@
+[
+    {
+        "command": "ls /repo",
+        "returncode": 0,
+        "time": 0.6058964729309082,
+        "dir": "/"
+    },
+    {
+        "command": "cat /repo/pyproject.toml",
+        "returncode": 0,
+        "time": 0.6069190502166748,
+        "dir": "/"
+    },
+    {
+        "command": "cat /repo/setup.cfg",
+        "returncode": 0,
+        "time": 0.6046340465545654,
+        "dir": "/"
+    }
+]
