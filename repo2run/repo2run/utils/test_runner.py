@@ -10,6 +10,23 @@ import re
 import subprocess
 from pathlib import Path
 import sys
+from contextlib import contextmanager
+
+
+@contextmanager
+def change_dir(path):
+    """
+    Context manager to temporarily change the working directory.
+    
+    Args:
+        path (str or Path): Path to change to.
+    """
+    old_dir = os.getcwd()
+    try:
+        os.chdir(path)
+        yield
+    finally:
+        os.chdir(old_dir)
 
 
 class TestRunner:
@@ -74,9 +91,8 @@ class TestRunner:
         if not test_files:
             self.logger.warning("No test files found. Listing directory contents for debugging:")
             try:
-                # Get current working directory
-                cwd = os.getcwd()
-                self.logger.info(f"Current working directory: {cwd}")
+                # Get current working directory - use absolute path of repo_path instead
+                self.logger.info(f"Repository directory: {self.repo_path.absolute()}")
                 
                 # List contents of repository directory
                 self.logger.info(f"Contents of repository directory ({self.repo_path}):")
@@ -300,15 +316,27 @@ class TestRunner:
         uv_command = ['uv', 'run']
         uv_command.extend(command)
                 
+        # Ensure we're using the provided working directory or the repository path
+        # Convert to absolute path to avoid any relative path issues
+        working_dir = cwd or self.repo_path
+        working_dir = Path(working_dir).absolute()
+        
         self.logger.info(f"Running command with uv: {' '.join(uv_command)}")
-        return subprocess.run(
-            uv_command,
-            cwd=cwd or self.repo_path,
-            check=False,
-            capture_output=True,
-            text=True,
-            env=env
-        )
+        self.logger.info(f"Using working directory: {working_dir}")
+        
+        # Use the context manager to temporarily change the working directory
+        with change_dir(working_dir):
+            # Log the actual current working directory to verify
+            self.logger.info(f"Current working directory: {os.getcwd()}")
+            
+            return subprocess.run(
+                uv_command,
+                # No need to specify cwd here as we've already changed directory
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env
+            )
     
     def run_tests(self):
         """
@@ -435,9 +463,8 @@ class TestRunner:
             
             # Print out current directory and file listing for debugging
             try:
-                # Get current working directory
-                cwd = os.getcwd()
-                self.logger.info(f"Current working directory: {cwd}")
+                # Get current working directory - use absolute path of repo_path instead
+                self.logger.info(f"Repository directory: {self.repo_path.absolute()}")
                 
                 # List contents of repository directory
                 self.logger.info(f"Contents of repository directory ({self.repo_path}):")
