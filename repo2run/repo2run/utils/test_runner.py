@@ -45,18 +45,30 @@ class TestRunner:
         
         test_files = []
         
-        # Find test files in tests/ directory
-        test_files.extend(self.repo_path.glob("**/tests/**/*test*.py"))
-        test_files.extend(self.repo_path.glob("**/test/**/*test*.py"))
+        # First, try to detect if there's a nested repository structure
+        potential_repos = list(self.repo_path.glob("*/.git"))
+        nested_repos = [p.parent for p in potential_repos if p.is_dir()]
         
-        # Find test files in the root directory
-        test_files.extend(self.repo_path.glob("test_*.py"))
-        test_files.extend(self.repo_path.glob("*_test.py"))
+        # If we found nested repositories, search in them as well
+        search_paths = [self.repo_path] + nested_repos
+        self.logger.info(f"Searching for tests in {len(search_paths)} locations: {[str(p) for p in search_paths]}")
+        
+        for path in search_paths:
+            # Find test files in tests/ directory
+            test_files.extend(path.glob("tests/**/*test*.py"))
+            test_files.extend(path.glob("test/**/*test*.py"))
+            
+            # Find test files in the root directory
+            test_files.extend(path.glob("test_*.py"))
+            test_files.extend(path.glob("*_test.py"))
         
         # Remove duplicates and sort
         test_files = sorted(set(test_files))
         
         self.logger.info(f"Found {len(test_files)} test files")
+        for test_file in test_files:
+            self.logger.debug(f"Found test file: {test_file}")
+            
         return test_files
     
     def check_pytest(self):
@@ -120,7 +132,7 @@ class TestRunner:
                 
                 # Install pytest using uv
                 result = subprocess.run(
-                    ['uv', 'pip', 'install', pytest_spec],
+                    ['pip', 'install', pytest_spec],
                     check=False,
                     capture_output=True,
                     text=True,
@@ -148,12 +160,10 @@ class TestRunner:
             list: List of test case identifiers.
         """
         self.logger.info("Collecting test cases")
-        
-        python_path = self.venv_path / 'bin' / 'python'
-        
+                
         try:
             result = subprocess.run(
-                [str(python_path), '-m', 'pytest', '--collect-only', '-q', '--disable-warnings'],
+                ['pytest', '--collect-only', '-q', '--disable-warnings'],
                 cwd=self.repo_path,
                 check=False,
                 capture_output=True,
@@ -225,12 +235,10 @@ class TestRunner:
                 "test_results": []
             }
         
-        # Run tests
-        python_path = self.venv_path / 'bin' / 'python'
-        
+        # Run tests        
         try:
             result = subprocess.run(
-                [str(python_path), '-m', 'pytest', '-v'],
+                ['pytest', '-v'],
                 cwd=self.repo_path,
                 check=False,
                 capture_output=True,
