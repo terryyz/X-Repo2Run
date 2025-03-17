@@ -74,7 +74,9 @@ class TestRunner:
         ]
         
         for pattern in test_patterns:
-            test_files.extend(self.repo_path.glob(pattern))
+            found_files = list(self.repo_path.glob(pattern))
+            self.logger.info(f"Pattern {pattern} found {len(found_files)} files")
+            test_files.extend(found_files)
         
         # Remove duplicates and sort
         test_files = sorted(set(test_files))
@@ -333,14 +335,19 @@ class TestRunner:
         try:
             # First collect tests to verify we can find them
             test_cases = self.collect_tests()
+            
+            # Check if we have test files even if no test cases were collected
+            test_files = self.find_tests()
+            
             if not test_cases:
                 self.logger.warning("No test cases found")
                 
-                # Check if we have test files even though no test cases were collected
-                test_files = self.find_tests()
                 if test_files:
                     self.logger.warning(f"Found {len(test_files)} test files but couldn't collect test cases. This is likely due to dependency issues.")
                     # We'll still return 0 tests found here, but the main.py will handle this case
+                    self.logger.info("Returning 0 tests found, but main.py will update this based on test files")
+                else:
+                    self.logger.warning("No test files found either")
                 
                 return {
                     "status": "success",

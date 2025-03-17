@@ -464,20 +464,27 @@ def main():
         result_data["tests"]["skipped"] = test_results["tests_skipped"]
         result_data["tests"]["details"] = test_results["test_results"]
         
+        add_log_entry(f"Initial test results: found={test_results['tests_found']}, passed={test_results['tests_passed']}, failed={test_results['tests_failed']}, skipped={test_results['tests_skipped']}")
+        
         # If no tests were found but test files exist, update the count
         if test_results["tests_found"] == 0:
+            add_log_entry("No tests were found in the initial collection, checking for test files...")
             # Get the number of test files
             test_files = test_runner.find_tests()
+            add_log_entry(f"Found {len(test_files)} test files")
             if test_files:
                 num_test_files = len(test_files)
                 add_log_entry(f"No tests were collected due to dependency issues, but {num_test_files} test files were found", level="WARNING")
                 result_data["tests"]["found"] = num_test_files
                 result_data["tests"]["failed"] = num_test_files  # Mark all as failed since they couldn't run
+                add_log_entry(f"Updated test counts: found={result_data['tests']['found']}, failed={result_data['tests']['failed']}")
                 
                 # Add test files to details
                 for test_file in test_files:
+                    relative_path = str(test_file.relative_to(project_dir))
+                    add_log_entry(f"Adding test file to details: {relative_path}")
                     result_data["tests"]["details"].append({
-                        "name": str(test_file.relative_to(project_dir)),
+                        "name": relative_path,
                         "status": "error",
                         "message": "Could not run due to dependency issues"
                     })
@@ -489,19 +496,25 @@ def main():
         # Update result data with summary information
         result_data["execution"]["elapsed_time"] = elapsed_time
         result_data["dependencies"]["installed"] = sum(1 for r in installation_results if r["success"])
-        result_data["tests"]["found"] = test_results["tests_found"]
-        result_data["tests"]["passed"] = test_results["tests_passed"]
-        result_data["tests"]["failed"] = test_results["tests_failed"]
-        result_data["tests"]["skipped"] = test_results["tests_skipped"]
+        
+        # Log the current test counts before final update
+        add_log_entry(f"Test counts before final update: found={result_data['tests']['found']}, passed={result_data['tests']['passed']}, failed={result_data['tests']['failed']}, skipped={result_data['tests']['skipped']}")
         
         # Fix the status determination
-        if test_results.get("status") == "error" or test_results["tests_failed"] > 0:
+        if test_results.get("status") == "error":
+            add_log_entry("Setting status to failure due to test error")
+            result_data["status"] = "failure"
+        elif test_results["tests_failed"] > 0 or result_data["tests"]["failed"] > 0:
+            add_log_entry(f"Setting status to failure due to failed tests: {test_results['tests_failed']} or {result_data['tests']['failed']}")
             result_data["status"] = "failure"
         elif result_data["tests"]["found"] > 0 and result_data["tests"]["passed"] == 0:
-            # If tests were found but none passed (likely due to dependency issues)
+            add_log_entry("Setting status to failure because tests were found but none passed")
             result_data["status"] = "failure"
         else:
+            add_log_entry("Setting status to success")
             result_data["status"] = "success"
+        
+        add_log_entry(f"Final status: {result_data['status']}")
         
         add_log_entry(f"Process completed in {elapsed_time:.2f} seconds")
         add_log_entry(f"Project configured in {project_dir}")
