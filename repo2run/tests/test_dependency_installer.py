@@ -108,14 +108,14 @@ def test_install_requirements(mock_run):
     # Check that uv add was called with the correct arguments
     assert mock_run.call_count >= 2  # At least 2 calls for the packages
     mock_run.assert_any_call(
-        ['uv', 'add', 'package1'],
+        ['uv', 'add', 'package1', '--frozen'],
         cwd=Path('.'),
         check=True,
         capture_output=True,
         text=True
     )
     mock_run.assert_any_call(
-        ['uv', 'add', 'package2==1.0.0'],
+        ['uv', 'add', 'package2==1.0.0', '--frozen'],
         cwd=Path('.'),
         check=True,
         capture_output=True,

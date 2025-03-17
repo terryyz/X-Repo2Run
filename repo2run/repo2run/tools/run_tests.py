@@ -57,6 +57,43 @@ def find_best_working_dir(repo_path):
     return repo_path
 
 
+def ensure_pytest_config(repo_path, working_dir, logger):
+    """
+    Ensure that a pyproject.toml file exists with proper pytest configuration.
+    
+    Args:
+        repo_path (Path): Path to the repository.
+        working_dir (Path): Path to the working directory for tests.
+        logger (logging.Logger): Logger instance.
+    """
+    pyproject_path = working_dir / "pyproject.toml"
+    
+    # Check if pyproject.toml exists
+    if pyproject_path.exists():
+        logger.info(f"Found existing pyproject.toml at {pyproject_path}")
+        
+        # Read the existing file
+        with open(pyproject_path, 'r') as f:
+            content = f.read()
+        
+        # Check if pytest configuration already exists
+        if "[tool.pytest.ini_options]" in content:
+            logger.info("Pytest configuration already exists in pyproject.toml")
+            return
+        
+        # Add pytest configuration to the existing file
+        logger.info("Adding pytest configuration to existing pyproject.toml")
+        with open(pyproject_path, 'a') as f:
+            f.write("\n\n[tool.pytest.ini_options]\npythonpath = [\".\"]\n")
+    else:
+        # Create a new pyproject.toml file with pytest configuration
+        logger.info(f"Creating pyproject.toml with pytest configuration at {pyproject_path}")
+        with open(pyproject_path, 'w') as f:
+            f.write("[tool.pytest.ini_options]\npythonpath = [\".\"]\n")
+    
+    logger.info("Updated pyproject.toml with pytest configuration")
+
+
 def run_tests_with_uv(repo_path, logger):
     """
     Run tests using uv run pytest.
@@ -119,6 +156,9 @@ def run_tests_with_uv(repo_path, logger):
     # Find the best working directory
     working_dir = find_best_working_dir(repo_path)
     logger.info(f"Using working directory for pytest: {working_dir}")
+    
+    # Ensure pytest configuration exists
+    ensure_pytest_config(repo_path, working_dir, logger)
     
     # Create a modified environment with PYTHONPATH set to include the working directory
     env = dict(os.environ)

@@ -145,7 +145,8 @@ class DependencyInstaller:
                 cmd = [
                     'uv', 
                     'add', 
-                    req
+                    req,
+                    '--frozen'
                 ]
                 
                 result = subprocess.run(
@@ -180,7 +181,8 @@ class DependencyInstaller:
                 'uv',
                 'add',
                 'pytest',
-                '--dev'
+                '--dev',
+                '--frozen'
             ]
             
             subprocess.run(
