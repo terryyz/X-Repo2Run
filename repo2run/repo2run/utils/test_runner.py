@@ -63,29 +63,23 @@ class TestRunner:
         
         test_files = []
         
-        # First, try to detect if there's a nested repository structure
-        potential_repos = list(self.repo_path.glob("*/.git"))
-        nested_repos = [p.parent for p in potential_repos if p.is_dir()]
+        # Search recursively for test files
+        test_patterns = [
+            "**/tests/**/*test*.py",
+            "**/test/**/*test*.py",
+            "**/test_*.py",
+            "**/*_test.py"
+        ]
         
-        # If we found nested repositories, search in them as well
-        search_paths = [self.repo_path] + nested_repos
-        self.logger.info(f"Searching for tests in {len(search_paths)} locations: {[str(p) for p in search_paths]}")
-        
-        for path in search_paths:
-            # Find test files in tests/ directory
-            test_files.extend(path.glob("tests/**/*test*.py"))
-            test_files.extend(path.glob("test/**/*test*.py"))
-            
-            # Find test files in the root directory
-            test_files.extend(path.glob("test_*.py"))
-            test_files.extend(path.glob("*_test.py"))
+        for pattern in test_patterns:
+            test_files.extend(self.repo_path.glob(pattern))
         
         # Remove duplicates and sort
         test_files = sorted(set(test_files))
         
         self.logger.info(f"Found {len(test_files)} test files")
         for test_file in test_files:
-            self.logger.debug(f"Found test file: {test_file}")
+            self.logger.info(f"Found test file: {test_file}")
         
         # If no test files found, print out current directory contents for debugging
         if not test_files:
@@ -99,13 +93,6 @@ class TestRunner:
                 for item in self.repo_path.iterdir():
                     item_type = "DIR" if item.is_dir() else "FILE"
                     self.logger.info(f"  {item_type}: {item.name}")
-                
-                # If there are nested repos, list their contents too
-                for repo in nested_repos:
-                    self.logger.info(f"Contents of nested repository ({repo}):")
-                    for item in repo.iterdir():
-                        item_type = "DIR" if item.is_dir() else "FILE"
-                        self.logger.info(f"  {item_type}: {item.name}")
             except Exception as e:
                 self.logger.error(f"Error listing directory contents: {str(e)}")
             
