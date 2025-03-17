@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
+import sys
 
 
 class TestRunner:
@@ -104,7 +105,14 @@ class TestRunner:
         self.logger.info("Checking if pytest is installed")
         
         try:
-            result = self._run_in_venv(['pytest', '--version'])
+            # Check if pytest is installed using uv run
+            result = subprocess.run(
+                ['uv', 'run', 'pytest', '--version'],
+                cwd=self.repo_path,
+                check=False,
+                capture_output=True,
+                text=True
+            )
             
             if result.returncode == 0:
                 self.logger.info(f"pytest is installed: {result.stdout.strip()}")
@@ -125,46 +133,25 @@ class TestRunner:
         """
         self.logger.info("Installing pytest using uv")
         
-        python_path = self.venv_path / 'bin' / 'python'
-        
         try:
-            # Get Python version to determine compatible pytest version
-            version_result = subprocess.run(
-                [str(python_path), '-c', 'import sys; print(sys.version_info.major, sys.version_info.minor)'],
+            # For Python 3.12+, we need pytest 7.4.0 or newer which doesn't use the removed 'imp' module
+            pytest_spec = "pytest>=7.4.0" if sys.version_info.major == 3 and sys.version_info.minor >= 12 else "pytest"
+            self.logger.info(f"Installing {pytest_spec} for Python {sys.version_info.major}.{sys.version_info.minor}")
+            
+            # Use uv add to install pytest as a dev dependency
+            result = subprocess.run(
+                ['uv', 'add', pytest_spec, '--dev'],
+                cwd=self.repo_path,
                 check=False,
                 capture_output=True,
                 text=True
             )
             
-            if version_result.returncode != 0:
-                self.logger.error(f"Failed to determine Python version: {version_result.stderr}")
-                return False
-                
-            python_version = version_result.stdout.strip().split()
-            if len(python_version) == 2:
-                major, minor = map(int, python_version)
-                
-                # For Python 3.12+, we need pytest 7.4.0 or newer
-                pytest_spec = "pytest>=7.4.0" if major == 3 and minor >= 12 else "pytest"
-                self.logger.info(f"Installing {pytest_spec} for Python {major}.{minor}")
-                
-                # Install pytest using uv
-                result = subprocess.run(
-                    ['pip', 'install', pytest_spec],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    env=dict(os.environ, VIRTUAL_ENV=str(self.venv_path))
-                )
-                
-                if result.returncode == 0:
-                    self.logger.info("pytest installed successfully using uv")
-                    return True
-                else:
-                    self.logger.error(f"Failed to install pytest using uv: {result.stderr}")
-                    return False
+            if result.returncode == 0:
+                self.logger.info("pytest installed successfully using uv")
+                return True
             else:
-                self.logger.error(f"Unexpected Python version format: {version_result.stdout}")
+                self.logger.error(f"Failed to install pytest using uv: {result.stderr}")
                 return False
         except Exception as e:
             self.logger.error(f"Failed to install pytest using uv: {str(e)}")
@@ -301,7 +288,7 @@ class TestRunner:
     
     def _run_in_venv(self, command, cwd=None, env=None):
         """
-        Run a command in the virtual environment by first activating it.
+        Run a command in the virtual environment using uv run.
         
         Args:
             command (list): Command to run as a list of strings.
@@ -311,64 +298,82 @@ class TestRunner:
         Returns:
             subprocess.CompletedProcess: Result of the command.
         """
-        # Create a temporary shell script to activate the venv and run the command
-        activate_script = self.venv_path / 'bin' / 'activate'
-        
-        if not activate_script.exists():
-            self.logger.warning(f"Virtual environment activation script not found at {activate_script}")
-            # Fall back to running the command directly
+        # Check if this is a pytest command
+        if command and command[0] == 'pytest':
+            # Use uv run for pytest commands
+            uv_command = ['uv', 'run', 'pytest']
+            # Add any arguments from the original command
+            if len(command) > 1:
+                uv_command.extend(command[1:])
+                
+            self.logger.info(f"Running command with uv: {' '.join(uv_command)}")
             return subprocess.run(
-                command,
+                uv_command,
                 cwd=cwd,
                 check=False,
                 capture_output=True,
                 text=True,
                 env=env
             )
-        
-        # Create a shell script that activates the venv and runs the command
-        script_content = f"""#!/bin/bash
+        else:
+            # For non-pytest commands, use the original approach
+            activate_script = self.venv_path / 'bin' / 'activate'
+            
+            if not activate_script.exists():
+                self.logger.warning(f"Virtual environment activation script not found at {activate_script}")
+                # Fall back to running the command directly
+                return subprocess.run(
+                    command,
+                    cwd=cwd,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env
+                )
+            
+            # Create a shell script that activates the venv and runs the command
+            script_content = f"""#!/bin/bash
 source {activate_script}
 {' '.join(command)}
 """
-        script_path = self.repo_path / '.run_in_venv.sh'
-        try:
-            with open(script_path, 'w') as f:
-                f.write(script_content)
-            os.chmod(script_path, 0o755)  # Make the script executable
-            
-            self.logger.info(f"Running command in virtual environment: {' '.join(command)}")
-            result = subprocess.run(
-                [str(script_path)],
-                cwd=cwd,
-                check=False,
-                capture_output=True,
-                text=True,
-                env=env
-            )
-            
-            # Clean up the temporary script
-            os.remove(script_path)
-            
-            return result
-        except Exception as e:
-            self.logger.error(f"Failed to run command in virtual environment: {str(e)}")
-            # Clean up the temporary script if it exists
-            if script_path.exists():
-                try:
-                    os.remove(script_path)
-                except:
-                    pass
-            
-            # Fall back to running the command directly
-            return subprocess.run(
-                command,
-                cwd=cwd,
-                check=False,
-                capture_output=True,
-                text=True,
-                env=env
-            )
+            script_path = self.repo_path / '.run_in_venv.sh'
+            try:
+                with open(script_path, 'w') as f:
+                    f.write(script_content)
+                os.chmod(script_path, 0o755)  # Make the script executable
+                
+                self.logger.info(f"Running command in virtual environment: {' '.join(command)}")
+                result = subprocess.run(
+                    [str(script_path)],
+                    cwd=cwd,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env
+                )
+                
+                # Clean up the temporary script
+                os.remove(script_path)
+                
+                return result
+            except Exception as e:
+                self.logger.error(f"Failed to run command in virtual environment: {str(e)}")
+                # Clean up the temporary script if it exists
+                if script_path.exists():
+                    try:
+                        os.remove(script_path)
+                    except:
+                        pass
+                
+                # Fall back to running the command directly
+                return subprocess.run(
+                    command,
+                    cwd=cwd,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env
+                )
     
     def run_tests(self):
         """
