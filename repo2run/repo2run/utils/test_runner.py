@@ -138,7 +138,7 @@ class TestRunner:
             
             # Use uv add to install pytest as a dev dependency
             result = subprocess.run(
-                ['uv', 'add', 'pytest', '--dev', '--frozen', '--resolution lowest-direct'],
+                ['uv', 'add', 'pytest', '--dev', '--frozen', '--resolution', 'lowest-direct'],
                 cwd=self.repo_path,
                 check=False,
                 capture_output=True,

@@ -161,7 +161,7 @@ class DependencyInstaller:
                     'uv', 
                     'add', 
                     req,
-                    '--frozen', '--resolution lowest-direct'
+                    '--frozen', '--resolution', 'lowest-direct'
                 ]
                 
                 result = subprocess.run(
@@ -197,7 +197,7 @@ class DependencyInstaller:
                 'add',
                 'pytest',
                 '--dev',
-                '--frozen', '--resolution lowest-direct'
+                '--frozen', '--resolution', 'lowest-direct'
             ]
             
             subprocess.run(
