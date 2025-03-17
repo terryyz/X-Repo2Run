@@ -88,6 +88,37 @@ class TestRunner:
             self.logger.warning(f"Failed to check if pytest is installed: {str(e)}")
             return False
     
+    def install_pytest(self):
+        """
+        Install pytest in the virtual environment using uv.
+        
+        Returns:
+            bool: True if pytest was successfully installed, False otherwise.
+        """
+        self.logger.info("Installing pytest using uv")
+        
+        python_path = self.venv_path / 'bin' / 'python'
+        
+        try:
+            # Install pytest using uv
+            result = subprocess.run(
+                ['uv', 'pip', 'install', 'pytest'],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=dict(os.environ, VIRTUAL_ENV=str(self.venv_path))
+            )
+            
+            if result.returncode == 0:
+                self.logger.info("pytest installed successfully using uv")
+                return True
+            else:
+                self.logger.error(f"Failed to install pytest using uv: {result.stderr}")
+                return False
+        except Exception as e:
+            self.logger.error(f"Failed to install pytest using uv: {str(e)}")
+            return False
+    
     def collect_tests(self):
         """
         Collect test cases using pytest.
@@ -133,16 +164,30 @@ class TestRunner:
         
         # Check if pytest is installed
         if not self.check_pytest():
-            self.logger.error("pytest is not installed. Cannot run tests.")
-            return {
-                "status": "error",
-                "message": "pytest is not installed",
-                "tests_found": 0,
-                "tests_passed": 0,
-                "tests_failed": 0,
-                "tests_skipped": 0,
-                "test_results": []
-            }
+            self.logger.info("pytest is not installed. Attempting to install it.")
+            if not self.install_pytest():
+                self.logger.error("Failed to install pytest. Cannot run tests.")
+                return {
+                    "status": "error",
+                    "message": "Failed to install pytest",
+                    "tests_found": 0,
+                    "tests_passed": 0,
+                    "tests_failed": 0,
+                    "tests_skipped": 0,
+                    "test_results": []
+                }
+            # Verify installation was successful
+            if not self.check_pytest():
+                self.logger.error("pytest installation verification failed. Cannot run tests.")
+                return {
+                    "status": "error",
+                    "message": "pytest installation verification failed",
+                    "tests_found": 0,
+                    "tests_passed": 0,
+                    "tests_failed": 0,
+                    "tests_skipped": 0,
+                    "test_results": []
+                }
         
         # Collect test cases
         test_cases = self.collect_tests()
