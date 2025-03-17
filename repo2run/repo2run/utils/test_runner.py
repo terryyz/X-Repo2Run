@@ -202,6 +202,10 @@ class TestRunner:
             self.logger.info(f"Test collection output:\n{result.stdout}")
             if result.stderr:
                 self.logger.warning(f"Test collection stderr:\n{result.stderr}")
+                
+                # Check if this is a dependency issue
+                if "Failed to build" in result.stderr or "ImportError" in result.stderr:
+                    self.logger.warning("Dependency issues detected during test collection")
             
             # Extract test cases using regex
             test_case_pattern = re.compile(r'^([\w/]+\.py::[\w_]+)$', re.MULTILINE)
@@ -331,6 +335,13 @@ class TestRunner:
             test_cases = self.collect_tests()
             if not test_cases:
                 self.logger.warning("No test cases found")
+                
+                # Check if we have test files even though no test cases were collected
+                test_files = self.find_tests()
+                if test_files:
+                    self.logger.warning(f"Found {len(test_files)} test files but couldn't collect test cases. This is likely due to dependency issues.")
+                    # We'll still return 0 tests found here, but the main.py will handle this case
+                
                 return {
                     "status": "success",
                     "message": "No test cases found",

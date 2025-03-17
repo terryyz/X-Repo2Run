@@ -464,6 +464,24 @@ def main():
         result_data["tests"]["skipped"] = test_results["tests_skipped"]
         result_data["tests"]["details"] = test_results["test_results"]
         
+        # If no tests were found but test files exist, update the count
+        if test_results["tests_found"] == 0:
+            # Get the number of test files
+            test_files = test_runner.find_tests()
+            if test_files:
+                num_test_files = len(test_files)
+                add_log_entry(f"No tests were collected due to dependency issues, but {num_test_files} test files were found", level="WARNING")
+                result_data["tests"]["found"] = num_test_files
+                result_data["tests"]["failed"] = num_test_files  # Mark all as failed since they couldn't run
+                
+                # Add test files to details
+                for test_file in test_files:
+                    result_data["tests"]["details"].append({
+                        "name": str(test_file.relative_to(project_dir)),
+                        "status": "error",
+                        "message": "Could not run due to dependency issues"
+                    })
+        
         # Generate summary
         end_time = time.time()
         elapsed_time = end_time - start_time
@@ -478,6 +496,9 @@ def main():
         
         # Fix the status determination
         if test_results.get("status") == "error" or test_results["tests_failed"] > 0:
+            result_data["status"] = "failure"
+        elif result_data["tests"]["found"] > 0 and result_data["tests"]["passed"] == 0:
+            # If tests were found but none passed (likely due to dependency issues)
             result_data["status"] = "failure"
         else:
             result_data["status"] = "success"
