@@ -213,12 +213,23 @@ class TestRunner:
         try:
             # Try with more verbose output to see what's happening
             self.logger.info("Running pytest with verbose collection")
+            
+            # Create a modified environment with PYTHONPATH set to include the working directory
+            env = dict(os.environ)
+            if 'PYTHONPATH' in env:
+                env['PYTHONPATH'] = f"{working_dir}:{env['PYTHONPATH']}"
+            else:
+                env['PYTHONPATH'] = str(working_dir)
+            
+            self.logger.info(f"Setting PYTHONPATH to: {env['PYTHONPATH']}")
+            
             verbose_result = subprocess.run(
                 ['pytest', '--collect-only', '-v'],
                 cwd=working_dir,
                 check=False,
                 capture_output=True,
-                text=True
+                text=True,
+                env=env
             )
             self.logger.info(f"Verbose collection output:\n{verbose_result.stdout}")
             if verbose_result.stderr:
@@ -230,7 +241,8 @@ class TestRunner:
                 cwd=working_dir,
                 check=False,
                 capture_output=True,
-                text=True
+                text=True,
+                env=env
             )
             
             if result.returncode == 0 or result.returncode == 5:
@@ -252,7 +264,8 @@ class TestRunner:
                             cwd=working_dir,
                             check=False,
                             capture_output=True,
-                            text=True
+                            text=True,
+                            env=env
                         )
                         self.logger.info(f"Direct collection for {test_file.name}:\n{direct_result.stdout}")
                         if direct_result.stderr:
@@ -328,6 +341,15 @@ class TestRunner:
         # Find the best working directory
         working_dir = self._find_best_working_dir()
         
+        # Create a modified environment with PYTHONPATH set to include the working directory
+        env = dict(os.environ)
+        if 'PYTHONPATH' in env:
+            env['PYTHONPATH'] = f"{working_dir}:{env['PYTHONPATH']}"
+        else:
+            env['PYTHONPATH'] = str(working_dir)
+        
+        self.logger.info(f"Setting PYTHONPATH to: {env['PYTHONPATH']}")
+        
         # Find test files directly
         test_files = []
         test_files.extend(working_dir.glob("tests/**/*test*.py"))
@@ -359,7 +381,8 @@ class TestRunner:
                             cwd=working_dir,
                             check=False,
                             capture_output=True,
-                            text=True
+                            text=True,
+                            env=env
                         )
                         
                         # Parse results for this file
@@ -456,7 +479,8 @@ class TestRunner:
                     cwd=working_dir,
                     check=False,
                     capture_output=True,
-                    text=True
+                    text=True,
+                    env=env
                 )
                 
                 # Parse test results
