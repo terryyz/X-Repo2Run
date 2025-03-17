@@ -173,7 +173,7 @@ def run_tests_with_uv(repo_path, logger):
     logger.info("Collecting test cases")
     try:
         collect_result = subprocess.run(
-            ['uv', 'run', 'pytest', '--collect-only', '-q', '--disable-warnings'],
+            ['uv', 'run', 'pytest', '-q', '--disable-warnings'],
             cwd=working_dir,
             check=False,
             capture_output=True,

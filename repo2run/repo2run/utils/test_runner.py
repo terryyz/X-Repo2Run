@@ -219,7 +219,7 @@ class TestRunner:
             # Try with more verbose output to see what's happening
             self.logger.info("Running pytest with verbose collection")
             verbose_result = self._run_in_venv(
-                ['pytest', '--collect-only', '-v'],
+                ['pytest', '-v'],
                 cwd=working_dir,
                 env=env
             )
@@ -229,7 +229,7 @@ class TestRunner:
             
             # Now try the regular collection
             result = self._run_in_venv(
-                ['pytest', '--collect-only', '-q', '--disable-warnings'],
+                ['pytest', '-q', '--disable-warnings'],
                 cwd=working_dir,
                 env=env
             )
@@ -249,7 +249,7 @@ class TestRunner:
                     self.logger.info("Trying to run pytest directly on test files")
                     for test_file in test_files:
                         direct_result = self._run_in_venv(
-                            ['pytest', str(test_file.relative_to(working_dir)), '--collect-only', '-v'],
+                            ['pytest', str(test_file.relative_to(working_dir)), '-v'],
                             cwd=working_dir,
                             env=env
                         )
