@@ -256,6 +256,17 @@ def main():
                     text=True
                 )
             logger.info(f"Virtual environment created at {venv_path} with Python 3.8")
+            
+            # Install setuptools with version constraint right after initialization
+            logger.info("Installing setuptools<58.0.0")
+            result = subprocess.run(
+                ['uv', 'add', 'setuptools<58.0.0'],
+                cwd=project_dir,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            logger.info(f"Setuptools installation result: {result.stdout}")
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to initialize project: {e.stderr}")
             raise RuntimeError(f"Failed to initialize project: {e.stderr}")

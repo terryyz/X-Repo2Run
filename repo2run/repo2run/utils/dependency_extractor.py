@@ -63,9 +63,6 @@ class DependencyExtractor:
         # Extract from environment.yml
         requirements.update(self._extract_from_environment_yml())
         
-        # Extract using pipreqs
-        requirements.update(self._extract_using_pipreqs())
-        
         self.logger.info(f"Found requirements from {len(requirements)} sources")
         return requirements
     

@@ -124,7 +124,6 @@ For each repository processed, Repo2Run generates the following output files:
 - pyproject.toml (Poetry and PEP 621)
 - Pipfile
 - environment.yml
-- pipreqs (automatic detection)
 
 ## License
 
