@@ -194,7 +194,8 @@ def main():
         logger.info(f"Saved installation results to {installation_results_path}")
         
         # Run tests using uv run
-        test_results = run_tests_with_uv(repo_path, logger)
+        test_runner = TestRunner(repo_path, logger=logger)
+        test_results = test_runner.run_tests()
         
         # Save test results
         test_results_path = output_dir / f"{repo_name}_test_results.json"
