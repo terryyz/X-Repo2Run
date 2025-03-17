@@ -281,16 +281,6 @@ def main():
                     text=True
                 )
             write_log_entry(f"Virtual environment created at {venv_path} with Python 3.9")
-            
-            # Install setuptools with version constraint right after initialization
-            write_log_entry("Installing setuptools<58.0.0")
-            result = subprocess.run(
-                ['uv', 'add', 'setuptools<58.0.0'],
-                cwd=project_dir,
-                check=True,
-                capture_output=True,
-                text=True
-            )
             write_log_entry(f"Setuptools installation result: {result.stdout}")
         except subprocess.CalledProcessError as e:
             write_log_entry(f"Failed to initialize project: {e.stderr}", level="ERROR")
@@ -446,6 +436,23 @@ def main():
             "overwrite_mode": args.overwrite
         }
         
+        # Create a consolidated JSON line entry with all data
+        consolidated_entry = {
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "repository": args.repo[0] if args.repo else str(args.local),
+            "repository_name": repo_name,
+            "summary": summary,
+            "requirements": unified_requirements,
+            "installation_results": installation_results,
+            "test_results": test_results,
+            "status": "success" if test_results["status"] == "success" else "failure"
+        }
+        
+        # Write the consolidated entry to log.jsonl
+        with open(log_jsonl_path, "a") as f:
+            f.write(json.dumps(consolidated_entry) + "\n")
+        
+        # Still save individual files for backward compatibility
         summary_path = output_dir / f"{repo_name}_summary.json"
         with open(summary_path, 'w') as f:
             json.dump(summary, f, indent=2)
@@ -454,16 +461,31 @@ def main():
         write_log_entry(f"Summary saved to {summary_path}")
         write_log_entry(f"Project configured in {project_dir}")
         write_log_entry(f"All configuration and test files are available in {project_dir}")
+        write_log_entry(f"Consolidated results written to {log_jsonl_path}")
         
         return 0
     
     except Exception as e:
-        write_log_entry(f"An error occurred: {str(e)}", level="ERROR", exc_info=True)
+        error_message = str(e)
+        write_log_entry(f"An error occurred: {error_message}", level="ERROR", exc_info=True)
         
         # Save error information
         error_path = output_dir / "error.txt"
         with open(error_path, 'w') as f:
-            f.write(f"Error: {str(e)}\n")
+            f.write(f"Error: {error_message}\n")
+        
+        # Create a consolidated error entry
+        error_entry = {
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "repository": args.repo[0] if args.repo else str(args.local),
+            "repository_name": repo_name if 'repo_name' in locals() else "unknown",
+            "status": "error",
+            "error": error_message
+        }
+        
+        # Write the error entry to log.jsonl
+        with open(log_jsonl_path, "a") as f:
+            f.write(json.dumps(error_entry) + "\n")
         
         return 1
     
