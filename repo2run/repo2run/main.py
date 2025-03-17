@@ -160,31 +160,66 @@ def main():
             try:
                 logger.info(f"Installing {req}")
                 
-                # Use uv add to install the requirement
+                # Use uv add to install the requirement with --frozen flag to skip dependency resolution
                 cmd = ['uv', 'add', req, '--frozen']
                 
-                result = subprocess.run(
-                    cmd,
-                    cwd=repo_path,
-                    check=True,
-                    capture_output=True,
-                    text=True
-                )
+                # First try with --frozen flag
+                try:
+                    result = subprocess.run(
+                        cmd,
+                        cwd=repo_path,
+                        check=True,
+                        capture_output=True,
+                        text=True
+                    )
+                    
+                    installation_results.append({
+                        'package': req,
+                        'success': True,
+                        'output': result.stdout,
+                        'method': 'frozen'
+                    })
+                    
+                    logger.info(f"Successfully installed {req} with --frozen flag")
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"Failed to install {req} with --frozen flag: {e.stderr}")
+                    
+                    # If it fails with --frozen, try with additional flags
+                    try:
+                        # Try with --no-deps as an alternative
+                        cmd_alt = ['uv', 'add', req, '--no-deps']
+                        result = subprocess.run(
+                            cmd_alt,
+                            cwd=repo_path,
+                            check=True,
+                            capture_output=True,
+                            text=True
+                        )
+                        
+                        installation_results.append({
+                            'package': req,
+                            'success': True,
+                            'output': result.stdout,
+                            'method': 'no-deps'
+                        })
+                        
+                        logger.info(f"Successfully installed {req} with --no-deps flag")
+                    except subprocess.CalledProcessError as e2:
+                        logger.warning(f"Failed to install {req} with --no-deps flag: {e2.stderr}")
+                        
+                        installation_results.append({
+                            'package': req,
+                            'success': False,
+                            'error': f"Failed with --frozen: {e.stderr}\nFailed with --no-deps: {e2.stderr}"
+                        })
                 
-                installation_results.append({
-                    'package': req,
-                    'success': True,
-                    'output': result.stdout
-                })
-                
-                logger.info(f"Successfully installed {req}")
-            except subprocess.CalledProcessError as e:
-                logger.warning(f"Failed to install {req}: {e.stderr}")
+            except Exception as e:
+                logger.warning(f"Unexpected error installing {req}: {str(e)}")
                 
                 installation_results.append({
                     'package': req,
                     'success': False,
-                    'error': e.stderr
+                    'error': str(e)
                 })
         
         # Save installation results
