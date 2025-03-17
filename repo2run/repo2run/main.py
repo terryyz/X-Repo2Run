@@ -299,16 +299,6 @@ def main():
                 )
             add_log_entry(f"Virtual environment created at {venv_path} with Python 3.10")
             
-            # Install setuptools with version constraint right after initialization
-            add_log_entry("Installing setuptools<58.0.0")
-            result = subprocess.run(
-                ['uv', 'add', 'setuptools<58.0.0'],
-                cwd=project_dir,
-                check=True,
-                capture_output=True,
-                text=True
-            )
-            add_log_entry(f"Setuptools installation result: {result.stdout}")
         except subprocess.CalledProcessError as e:
             add_log_entry(f"Failed to initialize project: {e.stderr}", level="ERROR")
             result_data["status"] = "error"
