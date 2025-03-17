@@ -54,14 +54,14 @@ repo2run-extract --repo-path /path/to/repo --output requirements.json --json --v
 
 ```bash
 # Install a package using UV
-repo2run-install -p package_name -v "==1.0.0" --venv /path/to/venv --verbose
+repo2run-install -p package_name -v "==1.0.0" --verbose
 ```
 
 #### Run Tests
 
 ```bash
 # Run tests in a repository
-repo2run-test --repo-path /path/to/repo --venv /path/to/venv --output test_results.json --verbose
+repo2run-test --repo-path /path/to/repo --output test_results.json --verbose
 ```
 
 ### Python API

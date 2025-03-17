@@ -74,7 +74,7 @@ def test_create_virtual_environment(mock_run):
     assert mock_run.call_count == 1
     # Check that uv init was called with the correct arguments
     mock_run.assert_called_with(
-        ['uv', 'init', '--venv', './.venv'],
+        ['uv', 'init'],
         cwd=Path('.'),
         check=True,
         capture_output=True,

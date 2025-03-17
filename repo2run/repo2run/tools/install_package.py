@@ -20,7 +20,6 @@ def main():
     parser = argparse.ArgumentParser(description='Install a Python package with UV.')
     parser.add_argument('-p', '--package', required=True, type=str, help='The name of the package to install.')
     parser.add_argument('-v', '--version', type=str, default='', help='The version constraints of the package.')
-    parser.add_argument('--venv', type=str, default='.venv', help='Path to the virtual environment.')
     parser.add_argument('--verbose', action='store_true', help='Enable verbose logging.')
     
     args = parser.parse_args()
