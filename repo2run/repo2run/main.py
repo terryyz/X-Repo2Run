@@ -143,7 +143,8 @@ def main():
         "execution": {
             "start_time": start_time,
             "elapsed_time": 0
-        }
+        },
+        "logs": []
     }
     
     # Function to add log entries to the result data
