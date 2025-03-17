@@ -92,8 +92,10 @@ class DependencyInstaller:
         self.logger.info(f"Creating virtual environment at {venv_path}")
         
         try:
+            # Use uv init to create a virtual environment and initialize the project
             result = subprocess.run(
-                ['uv', 'venv', str(venv_path)],
+                ['uv', 'init', '--venv', str(venv_path)],
+                cwd=self.repo_path,
                 check=True,
                 capture_output=True,
                 text=True
@@ -139,17 +141,16 @@ class DependencyInstaller:
             try:
                 self.logger.info(f"Installing {req}")
                 
+                # Use uv add to install the requirement
                 cmd = [
-                    'uv',
-                    'pip',
-                    'install',
-                    req,
-                    '--python',
-                    str(venv_path / 'bin' / 'python')
+                    'uv', 
+                    'add', 
+                    req
                 ]
                 
                 result = subprocess.run(
                     cmd,
+                    cwd=self.repo_path,
                     check=True,
                     capture_output=True,
                     text=True
@@ -171,20 +172,24 @@ class DependencyInstaller:
                     'error': e.stderr
                 })
         
-        # Install pytest if not already installed
+        # Install pytest as a dev dependency if not already installed
         try:
-            self.logger.info("Installing pytest if not already installed")
+            self.logger.info("Installing pytest as a dev dependency if not already installed")
             
             cmd = [
                 'uv',
-                'pip',
-                'install',
+                'add',
                 'pytest',
-                '--python',
-                str(venv_path / 'bin' / 'python')
+                '--dev'
             ]
             
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            subprocess.run(
+                cmd, 
+                cwd=self.repo_path,
+                check=True, 
+                capture_output=True, 
+                text=True
+            )
         except subprocess.CalledProcessError as e:
             self.logger.warning(f"Failed to install pytest: {e.stderr}")
         

@@ -105,20 +105,20 @@ class TestRunner:
         self.logger.info("Checking if pytest is installed")
         
         try:
-            # Check if pytest is installed using uv run
+            # Check if pytest is installed using uv list
             result = subprocess.run(
-                ['uv', 'run', 'pytest', '--version'],
+                ['uv', 'list', 'pytest'],
                 cwd=self.repo_path,
                 check=False,
                 capture_output=True,
                 text=True
             )
             
-            if result.returncode == 0:
+            if result.returncode == 0 and 'pytest' in result.stdout:
                 self.logger.info(f"pytest is installed: {result.stdout.strip()}")
                 return True
             else:
-                self.logger.warning(f"pytest is not installed: {result.stderr.strip()}")
+                self.logger.warning(f"pytest is not installed")
                 return False
         except Exception as e:
             self.logger.warning(f"Failed to check if pytest is installed: {str(e)}")
@@ -298,82 +298,19 @@ class TestRunner:
         Returns:
             subprocess.CompletedProcess: Result of the command.
         """
-        # Check if this is a pytest command
-        if command and command[0] == 'pytest':
-            # Use uv run for pytest commands
-            uv_command = ['uv', 'run', 'pytest']
-            # Add any arguments from the original command
-            if len(command) > 1:
-                uv_command.extend(command[1:])
+        # Use uv run for all commands
+        uv_command = ['uv', 'run']
+        uv_command.extend(command)
                 
-            self.logger.info(f"Running command with uv: {' '.join(uv_command)}")
-            return subprocess.run(
-                uv_command,
-                cwd=cwd,
-                check=False,
-                capture_output=True,
-                text=True,
-                env=env
-            )
-        else:
-            # For non-pytest commands, use the original approach
-            activate_script = self.venv_path / 'bin' / 'activate'
-            
-            if not activate_script.exists():
-                self.logger.warning(f"Virtual environment activation script not found at {activate_script}")
-                # Fall back to running the command directly
-                return subprocess.run(
-                    command,
-                    cwd=cwd,
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    env=env
-                )
-            
-            # Create a shell script that activates the venv and runs the command
-            script_content = f"""#!/bin/bash
-source {activate_script}
-{' '.join(command)}
-"""
-            script_path = self.repo_path / '.run_in_venv.sh'
-            try:
-                with open(script_path, 'w') as f:
-                    f.write(script_content)
-                os.chmod(script_path, 0o755)  # Make the script executable
-                
-                self.logger.info(f"Running command in virtual environment: {' '.join(command)}")
-                result = subprocess.run(
-                    [str(script_path)],
-                    cwd=cwd,
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    env=env
-                )
-                
-                # Clean up the temporary script
-                os.remove(script_path)
-                
-                return result
-            except Exception as e:
-                self.logger.error(f"Failed to run command in virtual environment: {str(e)}")
-                # Clean up the temporary script if it exists
-                if script_path.exists():
-                    try:
-                        os.remove(script_path)
-                    except:
-                        pass
-                
-                # Fall back to running the command directly
-                return subprocess.run(
-                    command,
-                    cwd=cwd,
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    env=env
-                )
+        self.logger.info(f"Running command with uv: {' '.join(uv_command)}")
+        return subprocess.run(
+            uv_command,
+            cwd=cwd or self.repo_path,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env
+        )
     
     def run_tests(self):
         """

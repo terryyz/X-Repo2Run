@@ -6,8 +6,8 @@ Main entry point for Repo2Run.
 This script handles the workflow of:
 1. Cloning or using a local repository
 2. Extracting and unifying requirements
-3. Installing dependencies using UV
-4. Running tests
+3. Initializing project and installing dependencies using UV
+4. Running tests with UV
 """
 
 import argparse
@@ -22,8 +22,8 @@ from pathlib import Path
 from repo2run.utils.repo_manager import RepoManager
 from repo2run.utils.dependency_extractor import DependencyExtractor
 from repo2run.utils.dependency_installer import DependencyInstaller
-from repo2run.utils.test_runner import TestRunner
 from repo2run.utils.logger import setup_logger
+from repo2run.tools.run_tests import run_tests_with_uv
 
 
 def parse_arguments():
@@ -116,10 +116,56 @@ def main():
             f.write('\n'.join(unified_requirements))
         logger.info(f"Saved unified requirements to {requirements_path}")
         
-        # Install dependencies
-        installer = DependencyInstaller(repo_path, logger=logger)
-        venv_path = installer.create_virtual_environment()
-        installation_results = installer.install_requirements(unified_requirements, venv_path)
+        # Initialize project with uv
+        logger.info("Initializing project with uv")
+        venv_path = repo_path / '.venv'
+        try:
+            result = subprocess.run(
+                ['uv', 'init', '--venv', str(venv_path)],
+                cwd=repo_path,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            logger.info(f"Project initialized with virtual environment at {venv_path}")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to initialize project: {e.stderr}")
+            raise RuntimeError(f"Failed to initialize project: {e.stderr}")
+        
+        # Install dependencies using uv add
+        logger.info(f"Installing {len(unified_requirements)} requirements using UV")
+        installation_results = []
+        
+        for req in unified_requirements:
+            try:
+                logger.info(f"Installing {req}")
+                
+                # Use uv add to install the requirement
+                cmd = ['uv', 'add', req]
+                
+                result = subprocess.run(
+                    cmd,
+                    cwd=repo_path,
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
+                
+                installation_results.append({
+                    'package': req,
+                    'success': True,
+                    'output': result.stdout
+                })
+                
+                logger.info(f"Successfully installed {req}")
+            except subprocess.CalledProcessError as e:
+                logger.warning(f"Failed to install {req}: {e.stderr}")
+                
+                installation_results.append({
+                    'package': req,
+                    'success': False,
+                    'error': e.stderr
+                })
         
         # Save installation results
         installation_results_path = output_dir / f"{repo_name}_installation_results.json"
@@ -127,9 +173,8 @@ def main():
             json.dump(installation_results, f, indent=2)
         logger.info(f"Saved installation results to {installation_results_path}")
         
-        # Run tests
-        test_runner = TestRunner(repo_path, venv_path, logger=logger)
-        test_results = test_runner.run_tests()
+        # Run tests using uv run
+        test_results = run_tests_with_uv(repo_path, logger)
         
         # Save test results
         test_results_path = output_dir / f"{repo_name}_test_results.json"

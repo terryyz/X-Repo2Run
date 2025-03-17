@@ -56,7 +56,7 @@ def test_check_uv_installed_failure_then_install(mock_run):
 
 @patch("subprocess.run")
 def test_create_virtual_environment(mock_run):
-    """Test creating a virtual environment."""
+    """Test creating a virtual environment using uv init."""
     # Mock subprocess.run to return success
     mock_process = MagicMock()
     mock_process.returncode = 0
@@ -71,4 +71,53 @@ def test_create_virtual_environment(mock_run):
     
     # Check results
     assert venv_path == Path("./.venv")
-    assert mock_run.call_count == 1 
+    assert mock_run.call_count == 1
+    # Check that uv init was called with the correct arguments
+    mock_run.assert_called_with(
+        ['uv', 'init', '--venv', './.venv'],
+        cwd=Path('.'),
+        check=True,
+        capture_output=True,
+        text=True
+    )
+
+
+@patch("subprocess.run")
+def test_install_requirements(mock_run):
+    """Test installing requirements using uv add."""
+    # Mock subprocess.run to return success
+    mock_process = MagicMock()
+    mock_process.returncode = 0
+    mock_run.return_value = mock_process
+    
+    # Create installer
+    installer = DependencyInstaller(Path("."))
+    
+    # Install requirements
+    with patch.object(installer, "check_uv_installed", return_value=True):
+        with patch.object(installer, "create_virtual_environment", return_value=Path("./.venv")):
+            results = installer.install_requirements(["package1", "package2==1.0.0"])
+    
+    # Check results
+    assert len(results) == 2
+    assert results[0]["package"] == "package1"
+    assert results[0]["success"] is True
+    assert results[1]["package"] == "package2==1.0.0"
+    assert results[1]["success"] is True
+    
+    # Check that uv add was called with the correct arguments
+    assert mock_run.call_count >= 2  # At least 2 calls for the packages
+    mock_run.assert_any_call(
+        ['uv', 'add', 'package1'],
+        cwd=Path('.'),
+        check=True,
+        capture_output=True,
+        text=True
+    )
+    mock_run.assert_any_call(
+        ['uv', 'add', 'package2==1.0.0'],
+        cwd=Path('.'),
+        check=True,
+        capture_output=True,
+        text=True
+    ) 
