@@ -95,10 +95,14 @@ class TestRunner:
         self.logger.info("Checking if pytest is installed")
         
         try:
+            # Get the working directory
+            working_dir = self._find_best_working_dir()
+            venv_dir = working_dir / '.venv'
+            
             # Check if pytest is installed using uv list
             result = subprocess.run(
-                ['uv', 'list', 'pytest'],
-                cwd=self.repo_path,
+                ['uv', 'pip', 'list', '--venv', str(venv_dir)],
+                cwd=working_dir,
                 check=False,
                 capture_output=True,
                 text=True
@@ -124,12 +128,16 @@ class TestRunner:
         self.logger.info("Installing pytest using uv")
         
         try:
-            self.logger.info(f"Installing pytest for Python")
+            # Get the working directory
+            working_dir = self._find_best_working_dir()
+            venv_dir = working_dir / '.venv'
             
-            # Use uv add to install pytest as a dev dependency
+            self.logger.info(f"Installing pytest for Python in {venv_dir}")
+            
+            # Use uv pip install to install pytest
             result = subprocess.run(
-                ['uv', 'add', 'pytest', '--dev', '--frozen', '--resolution', 'lowest-direct'],
-                cwd=self.repo_path,
+                ['uv', 'pip', 'install', 'pytest', '--venv', str(venv_dir)],
+                cwd=working_dir,
                 check=False,
                 capture_output=True,
                 text=True
@@ -248,7 +256,7 @@ class TestRunner:
     
     def _run_in_venv(self, command, cwd=None, env=None):
         """
-        Run a command in the virtual environment using uv run.
+        Run a command in the virtual environment using uv.
         
         Args:
             command (list): Command to run as a list of strings.
@@ -258,15 +266,39 @@ class TestRunner:
         Returns:
             subprocess.CompletedProcess: Result of the command.
         """
-        # Use uv run for all commands
-        uv_command = ['uv', 'run']
-        uv_command.extend(command)
-                
         # Ensure we're using the provided working directory or the repository path
         # Convert to absolute path to avoid any relative path issues
         working_dir = cwd or self.repo_path
         working_dir = Path(working_dir).absolute()
         
+        # Create a project-specific venv directory if it doesn't exist
+        venv_dir = working_dir / '.venv'
+        if not venv_dir.exists():
+            self.logger.info(f"Creating virtual environment in {venv_dir}")
+            try:
+                subprocess.run(['uv', 'venv', str(venv_dir)], check=True)
+            except subprocess.CalledProcessError as e:
+                self.logger.error(f"Failed to create virtual environment: {e}")
+                raise
+        
+        # Use the project's requirements.txt if it exists
+        requirements_file = working_dir / 'requirements.txt'
+        if requirements_file.exists():
+            self.logger.info(f"Installing dependencies from {requirements_file}")
+            try:
+                subprocess.run(
+                    ['uv', 'pip', 'install', '-r', str(requirements_file)],
+                    cwd=working_dir,
+                    check=True
+                )
+            except subprocess.CalledProcessError as e:
+                self.logger.error(f"Failed to install dependencies: {e}")
+                raise
+        
+        # Use uv run with the project-specific venv
+        uv_command = ['uv', 'run', '--venv', str(venv_dir)]
+        uv_command.extend(command)
+                
         self.logger.info(f"Running command with uv: {' '.join(uv_command)}")
         self.logger.info(f"Using working directory: {working_dir}")
         
@@ -275,9 +307,13 @@ class TestRunner:
             # Log the actual current working directory to verify
             self.logger.info(f"Current working directory: {os.getcwd()}")
             
+            # Ensure PYTHONPATH includes the working directory
+            if env is None:
+                env = dict(os.environ)
+            env['PYTHONPATH'] = str(working_dir)
+            
             return subprocess.run(
                 uv_command,
-                # No need to specify cwd here as we've already changed directory
                 check=False,
                 capture_output=True,
                 text=True,
