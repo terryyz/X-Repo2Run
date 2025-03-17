@@ -62,7 +62,7 @@ def main():
             logger.info(f"Initializing project with virtual environment at {venv_path}")
             try:
                 result = subprocess.run(
-                    ['uv', 'init', '--venv', str(venv_path)],
+                    ['uv', 'init'],
                     check=True,
                     capture_output=True,
                     text=True

@@ -94,7 +94,7 @@ class DependencyInstaller:
         try:
             # Use uv init to create a virtual environment and initialize the project
             result = subprocess.run(
-                ['uv', 'init', '--venv', str(venv_path)],
+                ['uv', 'init'],
                 cwd=self.repo_path,
                 check=True,
                 capture_output=True,

@@ -121,7 +121,7 @@ def main():
         venv_path = repo_path / '.venv'
         try:
             result = subprocess.run(
-                ['uv', 'init', '--venv', str(venv_path)],
+                ['uv', 'init'],
                 cwd=repo_path,
                 check=True,
                 capture_output=True,
