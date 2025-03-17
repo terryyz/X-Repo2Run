@@ -475,7 +475,12 @@ def main():
         result_data["tests"]["passed"] = test_results["tests_passed"]
         result_data["tests"]["failed"] = test_results["tests_failed"]
         result_data["tests"]["skipped"] = test_results["tests_skipped"]
-        result_data["status"] = "success" if test_results["status"] == "success" else "failure"
+        
+        # Fix the status determination
+        if test_results.get("status") == "error" or test_results["tests_failed"] > 0:
+            result_data["status"] = "failure"
+        else:
+            result_data["status"] = "success"
         
         add_log_entry(f"Process completed in {elapsed_time:.2f} seconds")
         add_log_entry(f"Project configured in {project_dir}")

@@ -339,12 +339,7 @@ class TestRunner:
             )
     
     def run_tests(self):
-        """
-        Run tests using pytest.
-        
-        Returns:
-            dict: Dictionary with test results.
-        """
+        """Run tests using pytest."""
         self.logger.info("Running tests")
         
         # Check if pytest is installed
@@ -372,188 +367,86 @@ class TestRunner:
         else:
             env['PYTHONPATH'] = str(working_dir)
         
+        # Add Django settings module if not already set
+        if 'DJANGO_SETTINGS_MODULE' not in env:
+            env['DJANGO_SETTINGS_MODULE'] = 'app.settings'
+        
         self.logger.info(f"Setting PYTHONPATH to: {env['PYTHONPATH']}")
+        self.logger.info(f"Using Django settings module: {env['DJANGO_SETTINGS_MODULE']}")
         
-        # Find test files directly
-        test_files = []
-        test_files.extend(working_dir.glob("tests/**/*test*.py"))
-        test_files.extend(working_dir.glob("test/**/*test*.py"))
-        test_files.extend(working_dir.glob("test_*.py"))
-        test_files.extend(working_dir.glob("*_test.py"))
-        
-        # Collect test cases
-        test_cases = self.collect_tests()
-        
-        if not test_cases:
-            self.logger.info("No test cases found through pytest collection")
+        try:
+            # Run pytest with verbose output
+            result = self._run_in_venv(
+                ['pytest', '-v', '--disable-warnings'],
+                cwd=working_dir,
+                env=env
+            )
             
-            # If we have test files but no test cases, try running the tests directly
-            if test_files:
-                self.logger.info(f"Found {len(test_files)} test files. Trying to run them directly.")
-                
-                # Run tests directly on the files
-                all_results = []
-                passed = 0
-                failed = 0
-                skipped = 0
-                
-                for test_file in test_files:
-                    self.logger.info(f"Running tests in {test_file.relative_to(working_dir)}")
-                    try:
-                        file_result = self._run_in_venv(
-                            ['pytest', str(test_file.relative_to(working_dir)), '-v'],
-                            cwd=working_dir,
-                            env=env
-                        )
-                        
-                        # Parse results for this file
-                        file_passed = 0
-                        file_failed = 0
-                        file_skipped = 0
-                        file_results = []
-                        
-                        for line in file_result.stdout.splitlines():
-                            if ' PASSED ' in line:
-                                test_name = line.split(' PASSED ')[0].strip()
-                                file_results.append({
-                                    "name": test_name,
-                                    "status": "passed"
-                                })
-                                file_passed += 1
-                            elif ' FAILED ' in line:
-                                test_name = line.split(' FAILED ')[0].strip()
-                                file_results.append({
-                                    "name": test_name,
-                                    "status": "failed"
-                                })
-                                file_failed += 1
-                            elif ' SKIPPED ' in line:
-                                test_name = line.split(' SKIPPED ')[0].strip()
-                                file_results.append({
-                                    "name": test_name,
-                                    "status": "skipped"
-                                })
-                                file_skipped += 1
-                        
-                        passed += file_passed
-                        failed += file_failed
-                        skipped += file_skipped
-                        all_results.extend(file_results)
-                        
-                        self.logger.info(f"Results for {test_file.name}: {file_passed} passed, {file_failed} failed, {file_skipped} skipped")
-                    except Exception as e:
-                        self.logger.error(f"Error running tests in {test_file.name}: {str(e)}")
-                
-                if all_results:
-                    status = "success" if failed == 0 else "failure"
-                    message = f"{passed} passed, {failed} failed, {skipped} skipped (direct file execution)"
-                    
-                    self.logger.info(f"Test results: {message}")
-                    
-                    return {
-                        "status": status,
-                        "message": message,
-                        "tests_found": len(all_results),
-                        "tests_passed": passed,
-                        "tests_failed": failed,
-                        "tests_skipped": skipped,
-                        "test_results": all_results,
-                        "note": "Tests were run directly on files, not through pytest collection"
-                    }
+            # Parse test results
+            test_results = []
+            passed = 0
+            failed = 0
+            skipped = 0
             
-            # Print out current directory and file listing for debugging
-            try:
-                # Get current working directory - use absolute path of repo_path instead
-                self.logger.info(f"Repository directory: {self.repo_path.absolute()}")
-                
-                # List contents of repository directory
-                self.logger.info(f"Contents of repository directory ({self.repo_path}):")
-                for item in self.repo_path.iterdir():
-                    item_type = "DIR" if item.is_dir() else "FILE"
-                    self.logger.info(f"  {item_type}: {item.name}")
-                
-                # Try to find any Python files in the repository
-                python_files = list(self.repo_path.glob("**/*.py"))
-                self.logger.info(f"Found {len(python_files)} Python files in repository")
-                if python_files:
-                    self.logger.info("Sample Python files:")
-                    for py_file in python_files[:10]:  # Show up to 10 files
-                        self.logger.info(f"  {py_file}")
-            except Exception as e:
-                self.logger.error(f"Error listing directory contents: {str(e)}")
+            # Parse the output to count tests
+            for line in result.stdout.splitlines():
+                if ' PASSED ' in line:
+                    test_name = line.split(' PASSED ')[0].strip()
+                    test_results.append({
+                        "name": test_name,
+                        "status": "passed"
+                    })
+                    passed += 1
+                elif ' FAILED ' in line:
+                    test_name = line.split(' FAILED ')[0].strip()
+                    test_results.append({
+                        "name": test_name,
+                        "status": "failed"
+                    })
+                    failed += 1
+                elif ' ERROR ' in line:
+                    test_name = line.split(' ERROR ')[0].strip()
+                    test_results.append({
+                        "name": test_name,
+                        "status": "error"
+                    })
+                    failed += 1
+                elif ' SKIPPED ' in line:
+                    test_name = line.split(' SKIPPED ')[0].strip()
+                    test_results.append({
+                        "name": test_name,
+                        "status": "skipped"
+                    })
+                    skipped += 1
+            
+            # Calculate total tests found
+            total_tests = passed + failed + skipped
+            
+            status = "success" if failed == 0 else "failure"
+            message = f"{passed} passed, {failed} failed, {skipped} skipped"
+            
+            self.logger.info(f"Test results: {message}")
             
             return {
-                "status": "success",
-                "message": "No test cases found",
+                "status": status,
+                "message": message,
+                "tests_found": total_tests,
+                "tests_passed": passed,
+                "tests_failed": failed,
+                "tests_skipped": skipped,
+                "test_results": test_results,
+                "stdout": result.stdout,
+                "stderr": result.stderr
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Failed to run tests: {str(e)}")
+            return {
+                "status": "error",
+                "message": str(e),
                 "tests_found": 0,
                 "tests_passed": 0,
                 "tests_failed": 0,
                 "tests_skipped": 0,
                 "test_results": []
-            }
-        else:
-            # Run tests        
-            try:
-                result = self._run_in_venv(
-                    ['pytest', '-v'],
-                    cwd=working_dir,
-                    env=env
-                )
-                
-                # Parse test results
-                test_results = []
-                passed = 0
-                failed = 0
-                skipped = 0
-                
-                for line in result.stdout.splitlines():
-                    if ' PASSED ' in line:
-                        test_name = line.split(' PASSED ')[0].strip()
-                        test_results.append({
-                            "name": test_name,
-                            "status": "passed"
-                        })
-                        passed += 1
-                    elif ' FAILED ' in line:
-                        test_name = line.split(' FAILED ')[0].strip()
-                        test_results.append({
-                            "name": test_name,
-                            "status": "failed"
-                        })
-                        failed += 1
-                    elif ' SKIPPED ' in line:
-                        test_name = line.split(' SKIPPED ')[0].strip()
-                        test_results.append({
-                            "name": test_name,
-                            "status": "skipped"
-                        })
-                        skipped += 1
-                
-                status = "success" if failed == 0 else "failure"
-                message = f"{passed} passed, {failed} failed, {skipped} skipped"
-                
-                self.logger.info(f"Test results: {message}")
-                
-                return {
-                    "status": status,
-                    "message": message,
-                    "tests_found": len(test_cases),
-                    "tests_passed": passed,
-                    "tests_failed": failed,
-                    "tests_skipped": skipped,
-                    "test_results": test_results,
-                    "stdout": result.stdout,
-                    "stderr": result.stderr
-                }
-            except Exception as e:
-                self.logger.error(f"Failed to run tests: {str(e)}")
-                
-                return {
-                    "status": "error",
-                    "message": str(e),
-                    "tests_found": len(test_cases),
-                    "tests_passed": 0,
-                    "tests_failed": 0,
-                    "tests_skipped": 0,
-                    "test_results": []
-                } 
+            } 
