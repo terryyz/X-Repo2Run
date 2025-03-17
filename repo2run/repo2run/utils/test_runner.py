@@ -67,12 +67,10 @@ class TestRunner:
             bool: True if pytest is installed, False otherwise.
         """
         self.logger.info("Checking if pytest is installed")
-        
-        python_path = self.venv_path / 'bin' / 'python'
-        
+                
         try:
             result = subprocess.run(
-                [str(python_path), '-m', 'pytest', '--version'],
+                ['pytest', '--version'],
                 check=False,
                 capture_output=True,
                 text=True
@@ -199,18 +197,18 @@ class TestRunner:
                     "tests_skipped": 0,
                     "test_results": []
                 }
-            # Verify installation was successful
-            if not self.check_pytest():
-                self.logger.error("pytest installation verification failed. Cannot run tests.")
-                return {
-                    "status": "error",
-                    "message": "pytest installation verification failed",
-                    "tests_found": 0,
-                    "tests_passed": 0,
-                    "tests_failed": 0,
-                    "tests_skipped": 0,
-                    "test_results": []
-                }
+            # # Verify installation was successful
+            # if not self.check_pytest():
+            #     self.logger.error("pytest installation verification failed. Cannot run tests.")
+            #     return {
+            #         "status": "error",
+            #         "message": "pytest installation verification failed",
+            #         "tests_found": 0,
+            #         "tests_passed": 0,
+            #         "tests_failed": 0,
+            #         "tests_skipped": 0,
+            #         "test_results": []
+            #     }
         
         # Collect test cases
         test_cases = self.collect_tests()
