@@ -68,6 +68,29 @@ class TestRunner:
         self.logger.info(f"Found {len(test_files)} test files")
         for test_file in test_files:
             self.logger.debug(f"Found test file: {test_file}")
+        
+        # If no test files found, print out current directory contents for debugging
+        if not test_files:
+            self.logger.warning("No test files found. Listing directory contents for debugging:")
+            try:
+                # Get current working directory
+                cwd = os.getcwd()
+                self.logger.info(f"Current working directory: {cwd}")
+                
+                # List contents of repository directory
+                self.logger.info(f"Contents of repository directory ({self.repo_path}):")
+                for item in self.repo_path.iterdir():
+                    item_type = "DIR" if item.is_dir() else "FILE"
+                    self.logger.info(f"  {item_type}: {item.name}")
+                
+                # If there are nested repos, list their contents too
+                for repo in nested_repos:
+                    self.logger.info(f"Contents of nested repository ({repo}):")
+                    for item in repo.iterdir():
+                        item_type = "DIR" if item.is_dir() else "FILE"
+                        self.logger.info(f"  {item_type}: {item.name}")
+            except Exception as e:
+                self.logger.error(f"Error listing directory contents: {str(e)}")
             
         return test_files
     
@@ -225,6 +248,29 @@ class TestRunner:
         
         if not test_cases:
             self.logger.info("No test cases found")
+            
+            # Print out current directory and file listing for debugging
+            try:
+                # Get current working directory
+                cwd = os.getcwd()
+                self.logger.info(f"Current working directory: {cwd}")
+                
+                # List contents of repository directory
+                self.logger.info(f"Contents of repository directory ({self.repo_path}):")
+                for item in self.repo_path.iterdir():
+                    item_type = "DIR" if item.is_dir() else "FILE"
+                    self.logger.info(f"  {item_type}: {item.name}")
+                
+                # Try to find any Python files in the repository
+                python_files = list(self.repo_path.glob("**/*.py"))
+                self.logger.info(f"Found {len(python_files)} Python files in repository")
+                if python_files:
+                    self.logger.info("Sample Python files:")
+                    for py_file in python_files[:10]:  # Show up to 10 files
+                        self.logger.info(f"  {py_file}")
+            except Exception as e:
+                self.logger.error(f"Error listing directory contents: {str(e)}")
+            
             return {
                 "status": "success",
                 "message": "No test cases found",
