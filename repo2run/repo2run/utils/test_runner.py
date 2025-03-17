@@ -94,11 +94,14 @@ class TestRunner:
         """
         self.logger.info("Checking if pytest is installed")
         
+        # Find the best working directory
+        working_dir = self._find_best_working_dir()
+        
         try:
             # Check if pytest is installed using uv list
             result = subprocess.run(
                 ['uv', 'list', 'pytest'],
-                cwd=self.repo_path,
+                cwd=working_dir,
                 check=False,
                 capture_output=True,
                 text=True
@@ -123,13 +126,16 @@ class TestRunner:
         """
         self.logger.info("Installing pytest using uv")
         
+        # Find the best working directory
+        working_dir = self._find_best_working_dir()
+        
         try:
             self.logger.info(f"Installing pytest for Python")
             
             # Use uv add to install pytest as a dev dependency
             result = subprocess.run(
                 ['uv', 'add', 'pytest', '--dev', '--frozen', '--resolution', 'lowest-direct'],
-                cwd=self.repo_path,
+                cwd=working_dir,
                 check=False,
                 capture_output=True,
                 text=True
