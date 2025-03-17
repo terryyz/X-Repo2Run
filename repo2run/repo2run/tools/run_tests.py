@@ -84,9 +84,9 @@ def run_tests_with_uv(repo_path, logger):
             logger.info("pytest is not installed. Installing pytest...")
             
             # Install pytest as a dev dependency
-            pytest_spec = "pytest>=7.4.0" if sys.version_info.major == 3 and sys.version_info.minor >= 12 else "pytest"
+            # pytest_spec = "pytest>=7.4.0" if sys.version_info.major == 3 and sys.version_info.minor >= 12 else "pytest"
             install_result = subprocess.run(
-                ['uv', 'add', pytest_spec, '--dev'],
+                ['uv', 'add', 'pytest', '--dev'],
                 cwd=repo_path,
                 check=False,
                 capture_output=True,
