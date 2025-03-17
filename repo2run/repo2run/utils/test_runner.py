@@ -102,10 +102,19 @@ class TestRunner:
             bool: True if pytest is installed, False otherwise.
         """
         self.logger.info("Checking if pytest is installed")
+        
+        # Get the Python interpreter from the virtual environment
+        python_path = self.venv_path / 'bin' / 'python'
+        if not python_path.exists():
+            self.logger.warning(f"Virtual environment Python not found at {python_path}. Using system Python.")
+            python_cmd = 'python'
+        else:
+            self.logger.info(f"Using Python from virtual environment: {python_path}")
+            python_cmd = str(python_path)
                 
         try:
             result = subprocess.run(
-                ['pytest', '--version'],
+                [python_cmd, '-m', 'pytest', '--version'],
                 check=False,
                 capture_output=True,
                 text=True
@@ -155,7 +164,7 @@ class TestRunner:
                 
                 # Install pytest using uv
                 result = subprocess.run(
-                    ['pip', 'install', pytest_spec],
+                    ['uv', 'pip', 'install', pytest_spec],
                     check=False,
                     capture_output=True,
                     text=True,
@@ -211,8 +220,14 @@ class TestRunner:
             self.logger.warning(f"No test files found in {working_dir}")
                 
         try:
-            # Try with more verbose output to see what's happening
-            self.logger.info("Running pytest with verbose collection")
+            # Get the Python interpreter from the virtual environment
+            python_path = self.venv_path / 'bin' / 'python'
+            if not python_path.exists():
+                self.logger.warning(f"Virtual environment Python not found at {python_path}. Using system Python.")
+                python_cmd = 'python'
+            else:
+                self.logger.info(f"Using Python from virtual environment: {python_path}")
+                python_cmd = str(python_path)
             
             # Create a modified environment with PYTHONPATH set to include the working directory
             env = dict(os.environ)
@@ -223,8 +238,10 @@ class TestRunner:
             
             self.logger.info(f"Setting PYTHONPATH to: {env['PYTHONPATH']}")
             
+            # Try with more verbose output to see what's happening
+            self.logger.info("Running pytest with verbose collection")
             verbose_result = subprocess.run(
-                ['pytest', '--collect-only', '-v'],
+                [python_cmd, '-m', 'pytest', '--collect-only', '-v'],
                 cwd=working_dir,
                 check=False,
                 capture_output=True,
@@ -237,7 +254,7 @@ class TestRunner:
             
             # Now try the regular collection
             result = subprocess.run(
-                ['pytest', '--collect-only', '-q', '--disable-warnings'],
+                [python_cmd, '-m', 'pytest', '--collect-only', '-q', '--disable-warnings'],
                 cwd=working_dir,
                 check=False,
                 capture_output=True,
@@ -260,7 +277,7 @@ class TestRunner:
                     self.logger.info("Trying to run pytest directly on test files")
                     for test_file in test_files:
                         direct_result = subprocess.run(
-                            ['pytest', str(test_file.relative_to(working_dir)), '--collect-only', '-v'],
+                            [python_cmd, '-m', 'pytest', str(test_file.relative_to(working_dir)), '--collect-only', '-v'],
                             cwd=working_dir,
                             check=False,
                             capture_output=True,
@@ -341,6 +358,15 @@ class TestRunner:
         # Find the best working directory
         working_dir = self._find_best_working_dir()
         
+        # Get the Python interpreter from the virtual environment
+        python_path = self.venv_path / 'bin' / 'python'
+        if not python_path.exists():
+            self.logger.warning(f"Virtual environment Python not found at {python_path}. Using system Python.")
+            python_cmd = 'python'
+        else:
+            self.logger.info(f"Using Python from virtual environment: {python_path}")
+            python_cmd = str(python_path)
+        
         # Create a modified environment with PYTHONPATH set to include the working directory
         env = dict(os.environ)
         if 'PYTHONPATH' in env:
@@ -377,7 +403,7 @@ class TestRunner:
                     self.logger.info(f"Running tests in {test_file.relative_to(working_dir)}")
                     try:
                         file_result = subprocess.run(
-                            ['pytest', str(test_file.relative_to(working_dir)), '-v'],
+                            [python_cmd, '-m', 'pytest', str(test_file.relative_to(working_dir)), '-v'],
                             cwd=working_dir,
                             check=False,
                             capture_output=True,
@@ -475,7 +501,7 @@ class TestRunner:
             # Run tests        
             try:
                 result = subprocess.run(
-                    ['pytest', '-v'],
+                    [python_cmd, '-m', 'pytest', '-v'],
                     cwd=working_dir,
                     check=False,
                     capture_output=True,
