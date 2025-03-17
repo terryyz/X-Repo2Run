@@ -141,7 +141,7 @@ def main():
                 logger.info(f"Installing {req}")
                 
                 # Use uv add to install the requirement
-                cmd = ['uv', 'add', req]
+                cmd = ['uv', 'add', req, '--frozen']
                 
                 result = subprocess.run(
                     cmd,

@@ -73,7 +73,7 @@ def main():
                 return 1
         
         # Install the package using uv add
-        cmd = ['uv', 'add', full_name]
+        cmd = ['uv', 'add', full_name, '--frozen']
         if args.dev:
             cmd.append('--dev')
         
