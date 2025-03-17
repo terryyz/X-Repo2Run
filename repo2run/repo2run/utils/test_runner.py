@@ -67,6 +67,8 @@ class TestRunner:
         test_patterns = [
             "**/tests/**/*test*.py",
             "**/test/**/*test*.py",
+            "**/tests/**/*_test.py",
+            "**/test/**/*_test.py",
             "**/test_*.py",
             "**/*_test.py"
         ]
@@ -81,21 +83,6 @@ class TestRunner:
         for test_file in test_files:
             self.logger.info(f"Found test file: {test_file}")
         
-        # If no test files found, print out current directory contents for debugging
-        if not test_files:
-            self.logger.warning("No test files found. Listing directory contents for debugging:")
-            try:
-                # Get current working directory - use absolute path of repo_path instead
-                self.logger.info(f"Repository directory: {self.repo_path.absolute()}")
-                
-                # List contents of repository directory
-                self.logger.info(f"Contents of repository directory ({self.repo_path}):")
-                for item in self.repo_path.iterdir():
-                    item_type = "DIR" if item.is_dir() else "FILE"
-                    self.logger.info(f"  {item_type}: {item.name}")
-            except Exception as e:
-                self.logger.error(f"Error listing directory contents: {str(e)}")
-            
         return test_files
     
     def check_pytest(self):
@@ -171,12 +158,8 @@ class TestRunner:
         working_dir = self._find_best_working_dir()
         self.logger.info(f"Using working directory for pytest: {working_dir}")
         
-        # First, let's check what test files actually exist
-        test_files = []
-        test_files.extend(working_dir.glob("tests/**/*test*.py"))
-        test_files.extend(working_dir.glob("test/**/*test*.py"))
-        test_files.extend(working_dir.glob("test_*.py"))
-        test_files.extend(working_dir.glob("*_test.py"))
+        # Get all test files
+        test_files = self.find_tests()
         
         if test_files:
             self.logger.info(f"Found {len(test_files)} potential test files in {working_dir}:")
@@ -203,48 +186,24 @@ class TestRunner:
             
             self.logger.info(f"Setting PYTHONPATH to: {env['PYTHONPATH']}")
             
-            # Try with more verbose output to see what's happening
-            self.logger.info("Running pytest with verbose collection")
-            verbose_result = self._run_in_venv(
-                ['pytest', '-v'],
-                cwd=working_dir,
-                env=env
-            )
-            self.logger.info(f"Verbose collection output:\n{verbose_result.stdout}")
-            if verbose_result.stderr:
-                self.logger.warning(f"Verbose collection stderr:\n{verbose_result.stderr}")
-            
-            # Now try the regular collection
+            # Run pytest with verbose output to collect tests
             result = self._run_in_venv(
-                ['pytest', '-q', '--disable-warnings'],
+                ['pytest', '--collect-only', '-v'],
                 cwd=working_dir,
                 env=env
             )
             
-            if result.returncode == 0 or result.returncode == 5:
-                # Extract test cases using regex
-                test_case_pattern = re.compile(r'^([\w/]+\.py::[\w_]+)$', re.MULTILINE)
-                test_cases = test_case_pattern.findall(result.stdout)
-                
-                self.logger.info(f"Collected {len(test_cases)} test cases")
-                return test_cases
-            else:
-                self.logger.warning(f"Failed to collect test cases: {result.stderr}")
-                
-                # Try running pytest directly on the test files
-                if test_files:
-                    self.logger.info("Trying to run pytest directly on test files")
-                    for test_file in test_files:
-                        direct_result = self._run_in_venv(
-                            ['pytest', str(test_file.relative_to(working_dir)), '-v'],
-                            cwd=working_dir,
-                            env=env
-                        )
-                        self.logger.info(f"Direct collection for {test_file.name}:\n{direct_result.stdout}")
-                        if direct_result.stderr:
-                            self.logger.warning(f"Direct collection stderr for {test_file.name}:\n{direct_result.stderr}")
-                
-                return []
+            self.logger.info(f"Test collection output:\n{result.stdout}")
+            if result.stderr:
+                self.logger.warning(f"Test collection stderr:\n{result.stderr}")
+            
+            # Extract test cases using regex
+            test_case_pattern = re.compile(r'^([\w/]+\.py::[\w_]+)$', re.MULTILINE)
+            test_cases = test_case_pattern.findall(result.stdout)
+            
+            self.logger.info(f"Collected {len(test_cases)} test cases")
+            return test_cases
+            
         except Exception as e:
             self.logger.warning(f"Failed to collect test cases: {str(e)}")
             return []
