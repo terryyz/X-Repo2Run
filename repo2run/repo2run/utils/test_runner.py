@@ -164,7 +164,7 @@ class TestRunner:
                 
                 # Install pytest using uv
                 result = subprocess.run(
-                    ['uv', 'pip', 'install', pytest_spec],
+                    ['pip', 'install', pytest_spec],
                     check=False,
                     capture_output=True,
                     text=True,
