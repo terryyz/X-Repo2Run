@@ -183,11 +183,15 @@ class TestRunner:
             list: List of test case identifiers.
         """
         self.logger.info("Collecting test cases")
+        
+        # Find the actual working directory to use
+        working_dir = self._find_best_working_dir()
+        self.logger.info(f"Using working directory for pytest: {working_dir}")
                 
         try:
             result = subprocess.run(
                 ['pytest', '--collect-only', '-q', '--disable-warnings'],
-                cwd=self.repo_path,
+                cwd=working_dir,
                 check=False,
                 capture_output=True,
                 text=True
@@ -206,6 +210,44 @@ class TestRunner:
         except Exception as e:
             self.logger.warning(f"Failed to collect test cases: {str(e)}")
             return []
+    
+    def _find_best_working_dir(self):
+        """
+        Find the best working directory to use for running tests.
+        
+        Returns:
+            Path: The best working directory to use.
+        """
+        # Check if there's a subdirectory that looks like the main project
+        # Common patterns for main project directories
+        common_names = [
+            "src", "app", "lib", 
+            # Look for directories with the same name as the parent directory
+            self.repo_path.name, 
+            # Look for directories with "-master" suffix (common in GitHub downloads)
+            f"{self.repo_path.name}-master"
+        ]
+        
+        # First, check if there's a tests directory in the repo_path
+        if (self.repo_path / "tests").is_dir() or (self.repo_path / "test").is_dir():
+            self.logger.info(f"Found tests directory in repository root")
+            return self.repo_path
+        
+        # Check for common project directory names
+        for name in common_names:
+            potential_dir = self.repo_path / name
+            if potential_dir.is_dir():
+                # Check if this directory has tests
+                if (potential_dir / "tests").is_dir() or (potential_dir / "test").is_dir():
+                    self.logger.info(f"Found tests directory in {name}/")
+                    return potential_dir
+                # Check if this directory has Python files
+                if list(potential_dir.glob("*.py")):
+                    self.logger.info(f"Found Python files in {name}/")
+                    return potential_dir
+        
+        # If we couldn't find a better directory, use the repo_path
+        return self.repo_path
     
     def run_tests(self):
         """
@@ -230,18 +272,9 @@ class TestRunner:
                     "tests_skipped": 0,
                     "test_results": []
                 }
-            # # Verify installation was successful
-            # if not self.check_pytest():
-            #     self.logger.error("pytest installation verification failed. Cannot run tests.")
-            #     return {
-            #         "status": "error",
-            #         "message": "pytest installation verification failed",
-            #         "tests_found": 0,
-            #         "tests_passed": 0,
-            #         "tests_failed": 0,
-            #         "tests_skipped": 0,
-            #         "test_results": []
-            #     }
+        
+        # Find the best working directory
+        working_dir = self._find_best_working_dir()
         
         # Collect test cases
         test_cases = self.collect_tests()
@@ -285,7 +318,7 @@ class TestRunner:
         try:
             result = subprocess.run(
                 ['pytest', '-v'],
-                cwd=self.repo_path,
+                cwd=working_dir,
                 check=False,
                 capture_output=True,
                 text=True
