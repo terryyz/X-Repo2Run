@@ -100,20 +100,43 @@ class TestRunner:
         python_path = self.venv_path / 'bin' / 'python'
         
         try:
-            # Install pytest using uv
-            result = subprocess.run(
-                ['uv', 'pip', 'install', 'pytest'],
+            # Get Python version to determine compatible pytest version
+            version_result = subprocess.run(
+                [str(python_path), '-c', 'import sys; print(sys.version_info.major, sys.version_info.minor)'],
                 check=False,
                 capture_output=True,
-                text=True,
-                env=dict(os.environ, VIRTUAL_ENV=str(self.venv_path))
+                text=True
             )
             
-            if result.returncode == 0:
-                self.logger.info("pytest installed successfully using uv")
-                return True
+            if version_result.returncode != 0:
+                self.logger.error(f"Failed to determine Python version: {version_result.stderr}")
+                return False
+                
+            python_version = version_result.stdout.strip().split()
+            if len(python_version) == 2:
+                major, minor = map(int, python_version)
+                
+                # For Python 3.12+, we need pytest 7.4.0 or newer
+                pytest_spec = "pytest>=7.4.0" if major == 3 and minor >= 12 else "pytest"
+                self.logger.info(f"Installing {pytest_spec} for Python {major}.{minor}")
+                
+                # Install pytest using uv
+                result = subprocess.run(
+                    ['uv', 'pip', 'install', pytest_spec],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=dict(os.environ, VIRTUAL_ENV=str(self.venv_path))
+                )
+                
+                if result.returncode == 0:
+                    self.logger.info("pytest installed successfully using uv")
+                    return True
+                else:
+                    self.logger.error(f"Failed to install pytest using uv: {result.stderr}")
+                    return False
             else:
-                self.logger.error(f"Failed to install pytest using uv: {result.stderr}")
+                self.logger.error(f"Unexpected Python version format: {version_result.stdout}")
                 return False
         except Exception as e:
             self.logger.error(f"Failed to install pytest using uv: {str(e)}")
