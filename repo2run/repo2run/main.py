@@ -120,8 +120,18 @@ def main():
             f.write('\n'.join(unified_requirements))
         logger.info(f"Saved unified requirements to {requirements_path}")
         
+        # Create a project directory in the output folder
+        project_dir = output_dir / repo_name
+        project_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Created project directory at {project_dir}")
+        
+        # Define paths for configuration files in the output directory
+        requirements_in_path = project_dir / "requirements.in"
+        compiled_requirements_path = project_dir / "requirements.txt"
+        pyproject_path = project_dir / "pyproject.toml"
+        venv_path = project_dir / '.venv'
+        
         # Create a requirements.in file for uv pip compile
-        requirements_in_path = repo_path / "requirements.in"
         with open(requirements_in_path, 'w') as f:
             f.write('\n'.join(unified_requirements))
         logger.info(f"Created requirements.in file at {requirements_in_path}")
@@ -131,7 +141,7 @@ def main():
         try:
             compiled_result = subprocess.run(
                 ['uv', 'pip', 'compile', 'requirements.in', '--resolution', 'lowest', '--output-file', 'requirements.txt'],
-                cwd=repo_path,
+                cwd=project_dir,
                 check=True,
                 capture_output=True,
                 text=True
@@ -139,14 +149,9 @@ def main():
             logger.info("Successfully compiled requirements with lowest resolution")
             
             # Read the compiled requirements
-            compiled_requirements_path = repo_path / "requirements.txt"
             if compiled_requirements_path.exists():
                 with open(compiled_requirements_path, 'r') as f:
                     compiled_requirements_content = f.read()
-                    
-                # Save a copy to the output directory
-                with open(output_dir / f"{repo_name}_compiled_requirements.txt", 'w') as f:
-                    f.write(compiled_requirements_content)
                 
                 # Parse the compiled requirements to get exact versions
                 exact_requirements = []
@@ -165,20 +170,24 @@ def main():
             logger.warning(f"Failed to compile requirements with lowest resolution: {e.stderr}")
             logger.warning("Falling back to original requirements")
         
-        # Check if pyproject.toml already exists
-        pyproject_path = repo_path / "pyproject.toml"
-        project_already_initialized = pyproject_path.exists()
+        # Check if pyproject.toml already exists in the original repo
+        original_pyproject_path = repo_path / "pyproject.toml"
+        project_already_initialized = original_pyproject_path.exists()
+        
+        # If pyproject.toml exists in the original repo, copy it to the project directory
+        if project_already_initialized:
+            shutil.copy(original_pyproject_path, pyproject_path)
+            logger.info(f"Copied existing pyproject.toml to {pyproject_path}")
         
         # Initialize project with uv
         logger.info("Initializing project with uv")
-        venv_path = repo_path / '.venv'
         
         try:
             # Install Python 3.8 using uv
             logger.info("Installing Python 3.8 using uv")
             result = subprocess.run(
                 ['uv', 'python', 'install', '3.8'],
-                cwd=repo_path,
+                cwd=project_dir,
                 check=True,
                 capture_output=True,
                 text=True
@@ -189,7 +198,7 @@ def main():
             logger.info("Pinning Python version to 3.8")
             result = subprocess.run(
                 ['uv', 'python', 'pin', '3.8'],
-                cwd=repo_path,
+                cwd=project_dir,
                 check=True,
                 capture_output=True,
                 text=True
@@ -202,7 +211,7 @@ def main():
                 # Just create the venv with Python 3.8
                 result = subprocess.run(
                     ['uv', 'venv', str(venv_path)],
-                    cwd=repo_path,
+                    cwd=project_dir,
                     check=True,
                     capture_output=True,
                     text=True
@@ -211,7 +220,7 @@ def main():
                 # Initialize project with uv init
                 result = subprocess.run(
                     ['uv', 'init'],
-                    cwd=repo_path,
+                    cwd=project_dir,
                     check=True,
                     capture_output=True,
                     text=True
@@ -233,7 +242,7 @@ def main():
                 
                 result = subprocess.run(
                     cmd,
-                    cwd=repo_path,
+                    cwd=project_dir,
                     check=True,
                     capture_output=True,
                     text=True
@@ -268,7 +277,7 @@ def main():
                     try:
                         result = subprocess.run(
                             cmd,
-                            cwd=repo_path,
+                            cwd=project_dir,
                             check=True,
                             capture_output=True,
                             text=True
@@ -291,7 +300,7 @@ def main():
                             cmd_alt = ['uv', 'add', req, '--no-deps']
                             result = subprocess.run(
                                 cmd_alt,
-                                cwd=repo_path,
+                                cwd=project_dir,
                                 check=True,
                                 capture_output=True,
                                 text=True
@@ -330,7 +339,22 @@ def main():
         logger.info(f"Saved installation results to {installation_results_path}")
         
         # Run tests using uv run
-        test_runner = TestRunner(repo_path, logger=logger)
+        # Copy necessary files from the original repo to the project directory for testing
+        logger.info("Copying source files from repository to project directory for testing")
+        try:
+            # Copy Python files and directories, excluding .git, .venv, etc.
+            for item in repo_path.glob('*'):
+                if item.name not in ['.git', '.venv', '__pycache__', '.pytest_cache']:
+                    if item.is_dir():
+                        shutil.copytree(item, project_dir / item.name, dirs_exist_ok=True)
+                    else:
+                        shutil.copy(item, project_dir / item.name)
+            logger.info("Source files copied successfully")
+        except Exception as e:
+            logger.warning(f"Error copying source files: {str(e)}")
+        
+        # Run tests in the project directory
+        test_runner = TestRunner(project_dir, logger=logger)
         test_results = test_runner.run_tests()
         
         # Save test results
@@ -351,7 +375,8 @@ def main():
             "dependencies_installed": sum(1 for r in installation_results if r["success"]),
             "tests_found": test_results["tests_found"],
             "tests_passed": test_results["tests_passed"],
-            "status": "success" if test_results["status"] == "success" else "failure"
+            "status": "success" if test_results["status"] == "success" else "failure",
+            "project_directory": str(project_dir)
         }
         
         summary_path = output_dir / f"{repo_name}_summary.json"
@@ -360,35 +385,10 @@ def main():
         
         logger.info(f"Process completed in {elapsed_time:.2f} seconds")
         logger.info(f"Summary saved to {summary_path}")
+        logger.info(f"Project configured in {project_dir}")
         
-        # Copy any important files from the repo to the output directory
-        try:
-            # Copy pyproject.toml if it exists
-            if pyproject_path.exists():
-                shutil.copy(pyproject_path, output_dir / f"{repo_name}_pyproject.toml")
-                logger.info(f"Copied pyproject.toml to {output_dir / f'{repo_name}_pyproject.toml'}")
-            
-            # Copy any test files found
-            test_files_dir = output_dir / f"{repo_name}_test_files"
-            test_files_dir.mkdir(exist_ok=True)
-            
-            # Find test files
-            test_files = []
-            test_files.extend(repo_path.glob("tests/**/*.py"))
-            test_files.extend(repo_path.glob("test/**/*.py"))
-            test_files.extend(repo_path.glob("test_*.py"))
-            test_files.extend(repo_path.glob("*_test.py"))
-            
-            for test_file in test_files:
-                rel_path = test_file.relative_to(repo_path)
-                dest_path = test_files_dir / rel_path
-                dest_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy(test_file, dest_path)
-            
-            if test_files:
-                logger.info(f"Copied {len(test_files)} test files to {test_files_dir}")
-        except Exception as e:
-            logger.warning(f"Failed to copy some files: {str(e)}")
+        # No need to copy files as they're already in the output directory
+        logger.info(f"All configuration and test files are available in {project_dir}")
         
         return 0
     
