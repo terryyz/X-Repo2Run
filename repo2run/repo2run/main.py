@@ -113,8 +113,19 @@ def main():
     # Initialize log.jsonl file
     log_jsonl_path = output_dir / "log.jsonl"
     
-    # Function to write log entries to jsonl file
-    def write_log_entry(message, level="INFO", **kwargs):
+    # Repository identifier (will be used as the key in the log.jsonl)
+    repo_identifier = args.repo[0] if args.repo else str(args.local)
+    
+    # Initialize result data structure
+    result_data = {
+        "repository": repo_identifier,
+        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "logs": [],
+        "status": "running"
+    }
+    
+    # Function to add log entries to the result data
+    def add_log_entry(message, level="INFO", **kwargs):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = {
             "timestamp": timestamp,
@@ -122,8 +133,8 @@ def main():
             "message": message,
             **kwargs
         }
-        with open(log_jsonl_path, "a") as f:
-            f.write(json.dumps(log_entry) + "\n")
+        result_data["logs"].append(log_entry)
+        
         # Also log to regular logger
         if level == "INFO":
             logger.info(message)
@@ -132,7 +143,7 @@ def main():
         elif level == "ERROR":
             logger.error(message)
     
-    write_log_entry("Starting Repo2Run")
+    add_log_entry("Starting Repo2Run")
     
     try:
         # Initialize repository
@@ -142,7 +153,8 @@ def main():
             full_name, sha = args.repo
             repo_path = repo_manager.clone_repository(full_name, sha)
             repo_name = repo_path.name
-            write_log_entry(f"Cloned repository {full_name} at {sha}", repo_name=repo_name)
+            add_log_entry(f"Cloned repository {full_name} at {sha}", repo_name=repo_name)
+            result_data["repository_name"] = repo_name
             # Store the temp directory for cleanup
             if args.workspace_dir is None:
                 temp_dir = repo_path.parent
@@ -150,7 +162,8 @@ def main():
             local_path = Path(args.local).resolve()
             repo_path = repo_manager.setup_local_repository(local_path)
             repo_name = repo_path.name
-            write_log_entry(f"Set up local repository from {local_path}", repo_name=repo_name)
+            add_log_entry(f"Set up local repository from {local_path}", repo_name=repo_name)
+            result_data["repository_name"] = repo_name
         
         # Create a project directory in the output folder
         project_dir = output_dir / repo_name
@@ -158,27 +171,30 @@ def main():
         # Check if project directory already exists
         if project_dir.exists():
             if args.overwrite:
-                write_log_entry(f"Project directory {project_dir} already exists. Overwriting as requested.", level="WARNING")
+                add_log_entry(f"Project directory {project_dir} already exists. Overwriting as requested.", level="WARNING")
                 # Remove the existing directory
                 shutil.rmtree(project_dir)
             else:
-                write_log_entry(f"Project directory {project_dir} already exists. Use --overwrite to overwrite.", level="ERROR")
+                add_log_entry(f"Project directory {project_dir} already exists. Use --overwrite to overwrite.", level="ERROR")
+                result_data["status"] = "error"
+                result_data["error"] = "Project directory already exists"
+                # Write the result to log.jsonl
+                with open(log_jsonl_path, "a") as f:
+                    f.write(json.dumps(result_data) + "\n")
                 return 1
         
         # Create the project directory
         project_dir.mkdir(parents=True, exist_ok=False)
-        write_log_entry(f"Created project directory at {project_dir}")
+        add_log_entry(f"Created project directory at {project_dir}")
+        result_data["project_directory"] = str(project_dir)
         
         # Extract dependencies
         dependency_extractor = DependencyExtractor(repo_path, logger=logger)
         requirements = dependency_extractor.extract_all_requirements()
         unified_requirements = dependency_extractor.unify_requirements(requirements)
+        result_data["requirements"] = unified_requirements
         
-        # Save unified requirements
-        requirements_path = output_dir / f"{repo_name}_requirements.txt"
-        with open(requirements_path, 'w') as f:
-            f.write('\n'.join(unified_requirements))
-        write_log_entry(f"Saved unified requirements to {requirements_path}")
+        add_log_entry(f"Extracted {len(unified_requirements)} requirements")
         
         # Define paths for configuration files in the output directory
         requirements_in_path = project_dir / "requirements.in"
@@ -189,10 +205,10 @@ def main():
         # Create a requirements.in file for uv pip compile
         with open(requirements_in_path, 'w') as f:
             f.write('\n'.join(unified_requirements))
-        write_log_entry(f"Created requirements.in file at {requirements_in_path}")
+        add_log_entry(f"Created requirements.in file at {requirements_in_path}")
         
         # Compile requirements with --resolution lowest to ensure compatibility with lower bounds
-        write_log_entry("Compiling requirements with --resolution lowest")
+        add_log_entry("Compiling requirements with --resolution lowest")
         try:
             compiled_result = subprocess.run(
                 ['uv', 'pip', 'compile', 'requirements.in', '--resolution', 'lowest', '--output-file', 'requirements.txt'],
@@ -201,7 +217,7 @@ def main():
                 capture_output=True,
                 text=True
             )
-            write_log_entry("Successfully compiled requirements with lowest resolution")
+            add_log_entry("Successfully compiled requirements with lowest resolution")
             
             # Read the compiled requirements
             if compiled_requirements_path.exists():
@@ -215,15 +231,16 @@ def main():
                     if line.strip() and not line.strip().startswith('#'):
                         exact_requirements.append(line.strip())
                 
-                write_log_entry(f"Parsed {len(exact_requirements)} exact requirements with lowest versions")
+                add_log_entry(f"Parsed {len(exact_requirements)} exact requirements with lowest versions")
                 
                 # Use these exact requirements for installation
                 unified_requirements = exact_requirements
+                result_data["compiled_requirements"] = exact_requirements
             else:
-                write_log_entry("Compiled requirements.txt not found, using original requirements", level="WARNING")
+                add_log_entry("Compiled requirements.txt not found, using original requirements", level="WARNING")
         except subprocess.CalledProcessError as e:
-            write_log_entry(f"Failed to compile requirements with lowest resolution: {e.stderr}", level="WARNING")
-            write_log_entry("Falling back to original requirements", level="WARNING")
+            add_log_entry(f"Failed to compile requirements with lowest resolution: {e.stderr}", level="WARNING")
+            add_log_entry("Falling back to original requirements", level="WARNING")
         
         # Check if pyproject.toml already exists in the original repo
         original_pyproject_path = repo_path / "pyproject.toml"
@@ -232,14 +249,14 @@ def main():
         # If pyproject.toml exists in the original repo, copy it to the project directory
         if project_already_initialized:
             shutil.copy(original_pyproject_path, pyproject_path)
-            write_log_entry(f"Copied existing pyproject.toml to {pyproject_path}")
+            add_log_entry(f"Copied existing pyproject.toml to {pyproject_path}")
         
         # Initialize project with uv
-        write_log_entry("Initializing project with uv")
+        add_log_entry("Initializing project with uv")
         
         try:
             # Install Python 3.9 using uv
-            write_log_entry("Installing Python 3.9 using uv")
+            add_log_entry("Installing Python 3.9 using uv")
             result = subprocess.run(
                 ['uv', 'python', 'install', '3.9'],
                 cwd=project_dir,
@@ -247,10 +264,10 @@ def main():
                 capture_output=True,
                 text=True
             )
-            write_log_entry(f"Python 3.9 installation result: {result.stdout}")
+            add_log_entry(f"Python 3.9 installation result: {result.stdout}")
             
             # Pin Python version to 3.9 using uv python pin
-            write_log_entry("Pinning Python version to 3.9")
+            add_log_entry("Pinning Python version to 3.9")
             result = subprocess.run(
                 ['uv', 'python', 'pin', '3.9'],
                 cwd=project_dir,
@@ -258,11 +275,11 @@ def main():
                 capture_output=True,
                 text=True
             )
-            write_log_entry(f"Python version pinning result: {result.stdout}")
+            add_log_entry(f"Python version pinning result: {result.stdout}")
             
             # Now initialize the project or create venv
             if project_already_initialized:
-                write_log_entry("Project already initialized (pyproject.toml exists)")
+                add_log_entry("Project already initialized (pyproject.toml exists)")
                 # Just create the venv with Python 3.9
                 result = subprocess.run(
                     ['uv', 'venv', str(venv_path)],
@@ -280,20 +297,35 @@ def main():
                     capture_output=True,
                     text=True
                 )
-            write_log_entry(f"Virtual environment created at {venv_path} with Python 3.9")
-            write_log_entry(f"Setuptools installation result: {result.stdout}")
+            add_log_entry(f"Virtual environment created at {venv_path} with Python 3.9")
+            
+            # Install setuptools with version constraint right after initialization
+            add_log_entry("Installing setuptools<58.0.0")
+            result = subprocess.run(
+                ['uv', 'add', 'setuptools<58.0.0'],
+                cwd=project_dir,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            add_log_entry(f"Setuptools installation result: {result.stdout}")
         except subprocess.CalledProcessError as e:
-            write_log_entry(f"Failed to initialize project: {e.stderr}", level="ERROR")
+            add_log_entry(f"Failed to initialize project: {e.stderr}", level="ERROR")
+            result_data["status"] = "error"
+            result_data["error"] = f"Failed to initialize project: {e.stderr}"
+            # Write the result to log.jsonl
+            with open(log_jsonl_path, "a") as f:
+                f.write(json.dumps(result_data) + "\n")
             raise RuntimeError(f"Failed to initialize project: {e.stderr}")
         
         # Install dependencies using uv add
-        write_log_entry(f"Installing {len(unified_requirements)} requirements using UV")
+        add_log_entry(f"Installing {len(unified_requirements)} requirements using UV")
         installation_results = []
         
         # First, try to install all requirements at once from the compiled requirements.txt
         if compiled_requirements_path.exists():
             try:
-                write_log_entry("Installing all requirements from compiled requirements.txt")
+                add_log_entry("Installing all requirements from compiled requirements.txt")
                 cmd = ['uv', 'pip', 'install', '-r', 'requirements.txt', '--no-deps']
                 
                 result = subprocess.run(
@@ -304,7 +336,7 @@ def main():
                     text=True
                 )
                 
-                write_log_entry("Successfully installed all requirements from compiled requirements.txt")
+                add_log_entry("Successfully installed all requirements from compiled requirements.txt")
                 
                 # Mark all requirements as successfully installed
                 for req in unified_requirements:
@@ -315,8 +347,8 @@ def main():
                         'method': 'compiled'
                     })
             except subprocess.CalledProcessError as e:
-                write_log_entry(f"Failed to install from compiled requirements.txt: {e.stderr}", level="WARNING")
-                write_log_entry("Falling back to individual package installation", level="WARNING")
+                add_log_entry(f"Failed to install from compiled requirements.txt: {e.stderr}", level="WARNING")
+                add_log_entry("Falling back to individual package installation", level="WARNING")
                 # Continue with individual package installation below
         
         # If we don't have a compiled requirements file or the bulk installation failed,
@@ -324,7 +356,7 @@ def main():
         if not installation_results:
             for req in unified_requirements:
                 try:
-                    write_log_entry(f"Installing {req}")
+                    add_log_entry(f"Installing {req}")
                     
                     # Use uv add to install the requirement with --frozen flag to skip dependency resolution
                     cmd = ['uv', 'add', req, '--frozen', '--resolution', 'lowest-direct']
@@ -346,9 +378,9 @@ def main():
                             'method': 'frozen'
                         })
                         
-                        write_log_entry(f"Successfully installed {req} with --frozen flag")
+                        add_log_entry(f"Successfully installed {req} with --frozen flag")
                     except subprocess.CalledProcessError as e:
-                        write_log_entry(f"Failed to install {req} with --frozen flag: {e.stderr}", level="WARNING")
+                        add_log_entry(f"Failed to install {req} with --frozen flag: {e.stderr}", level="WARNING")
                         
                         # If it fails with --frozen, try with additional flags
                         try:
@@ -369,9 +401,9 @@ def main():
                                 'method': 'no-deps'
                             })
                             
-                            write_log_entry(f"Successfully installed {req} with --no-deps flag")
+                            add_log_entry(f"Successfully installed {req} with --no-deps flag")
                         except subprocess.CalledProcessError as e2:
-                            write_log_entry(f"Failed to install {req} with --no-deps flag: {e2.stderr}", level="WARNING")
+                            add_log_entry(f"Failed to install {req} with --no-deps flag: {e2.stderr}", level="WARNING")
                             
                             installation_results.append({
                                 'package': req,
@@ -380,7 +412,7 @@ def main():
                             })
                     
                 except Exception as e:
-                    write_log_entry(f"Unexpected error installing {req}: {str(e)}", level="WARNING")
+                    add_log_entry(f"Unexpected error installing {req}: {str(e)}", level="WARNING")
                     
                     installation_results.append({
                         'package': req,
@@ -388,15 +420,13 @@ def main():
                         'error': str(e)
                     })
         
-        # Save installation results
-        installation_results_path = output_dir / f"{repo_name}_installation_results.json"
-        with open(installation_results_path, 'w') as f:
-            json.dump(installation_results, f, indent=2)
-        write_log_entry(f"Saved installation results to {installation_results_path}")
+        # Store installation results in the result data
+        result_data["installation_results"] = installation_results
+        result_data["dependencies_installed"] = sum(1 for r in installation_results if r["success"])
         
         # Run tests using uv run
         # Copy necessary files from the original repo to the project directory for testing
-        write_log_entry("Copying source files from repository to project directory for testing")
+        add_log_entry("Copying source files from repository to project directory for testing")
         try:
             # Copy Python files and directories, excluding .git, .venv, etc.
             for item in repo_path.glob('*'):
@@ -405,87 +435,50 @@ def main():
                         shutil.copytree(item, project_dir / item.name, dirs_exist_ok=True)
                     else:
                         shutil.copy(item, project_dir / item.name)
-            write_log_entry("Source files copied successfully")
+            add_log_entry("Source files copied successfully")
         except Exception as e:
-            write_log_entry(f"Error copying source files: {str(e)}", level="WARNING")
+            add_log_entry(f"Error copying source files: {str(e)}", level="WARNING")
         
         # Run tests in the project directory
         test_runner = TestRunner(project_dir, logger=logger)
         test_results = test_runner.run_tests()
         
-        # Save test results
-        test_results_path = output_dir / f"{repo_name}_test_results.json"
-        with open(test_results_path, 'w') as f:
-            json.dump(test_results, f, indent=2)
-        write_log_entry(f"Saved test results to {test_results_path}")
+        # Store test results in the result data
+        result_data["test_results"] = test_results
         
         # Generate summary
         end_time = time.time()
         elapsed_time = end_time - start_time
         
-        summary = {
-            "repository": args.repo[0] if args.repo else str(args.local),
-            "repository_name": repo_name,
-            "elapsed_time": elapsed_time,
-            "dependencies_found": len(unified_requirements),
-            "dependencies_installed": sum(1 for r in installation_results if r["success"]),
-            "tests_found": test_results["tests_found"],
-            "tests_passed": test_results["tests_passed"],
-            "status": "success" if test_results["status"] == "success" else "failure",
-            "project_directory": str(project_dir),
-            "overwrite_mode": args.overwrite
-        }
+        # Update result data with summary information
+        result_data["elapsed_time"] = elapsed_time
+        result_data["dependencies_found"] = len(unified_requirements)
+        result_data["tests_found"] = test_results["tests_found"]
+        result_data["tests_passed"] = test_results["tests_passed"]
+        result_data["status"] = "success" if test_results["status"] == "success" else "failure"
         
-        # Create a consolidated JSON line entry with all data
-        consolidated_entry = {
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "repository": args.repo[0] if args.repo else str(args.local),
-            "repository_name": repo_name,
-            "summary": summary,
-            "requirements": unified_requirements,
-            "installation_results": installation_results,
-            "test_results": test_results,
-            "status": "success" if test_results["status"] == "success" else "failure"
-        }
+        add_log_entry(f"Process completed in {elapsed_time:.2f} seconds")
+        add_log_entry(f"Project configured in {project_dir}")
         
-        # Write the consolidated entry to log.jsonl
+        # Write the final result to log.jsonl
         with open(log_jsonl_path, "a") as f:
-            f.write(json.dumps(consolidated_entry) + "\n")
+            f.write(json.dumps(result_data) + "\n")
         
-        # Still save individual files for backward compatibility
-        summary_path = output_dir / f"{repo_name}_summary.json"
-        with open(summary_path, 'w') as f:
-            json.dump(summary, f, indent=2)
-        
-        write_log_entry(f"Process completed in {elapsed_time:.2f} seconds")
-        write_log_entry(f"Summary saved to {summary_path}")
-        write_log_entry(f"Project configured in {project_dir}")
-        write_log_entry(f"All configuration and test files are available in {project_dir}")
-        write_log_entry(f"Consolidated results written to {log_jsonl_path}")
+        add_log_entry(f"Results written to {log_jsonl_path}")
         
         return 0
     
     except Exception as e:
         error_message = str(e)
-        write_log_entry(f"An error occurred: {error_message}", level="ERROR", exc_info=True)
+        add_log_entry(f"An error occurred: {error_message}", level="ERROR", exc_info=True)
         
-        # Save error information
-        error_path = output_dir / "error.txt"
-        with open(error_path, 'w') as f:
-            f.write(f"Error: {error_message}\n")
+        # Update result data with error information
+        result_data["status"] = "error"
+        result_data["error"] = error_message
         
-        # Create a consolidated error entry
-        error_entry = {
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "repository": args.repo[0] if args.repo else str(args.local),
-            "repository_name": repo_name if 'repo_name' in locals() else "unknown",
-            "status": "error",
-            "error": error_message
-        }
-        
-        # Write the error entry to log.jsonl
+        # Write the error result to log.jsonl
         with open(log_jsonl_path, "a") as f:
-            f.write(json.dumps(error_entry) + "\n")
+            f.write(json.dumps(result_data) + "\n")
         
         return 1
     
@@ -493,10 +486,10 @@ def main():
         # Clean up temporary directory if it was created
         if temp_dir and args.workspace_dir is None:
             try:
-                write_log_entry(f"Cleaning up temporary directory: {temp_dir}")
+                add_log_entry(f"Cleaning up temporary directory: {temp_dir}")
                 shutil.rmtree(temp_dir, ignore_errors=True)
             except Exception as e:
-                write_log_entry(f"Failed to clean up temporary directory: {str(e)}", level="WARNING")
+                add_log_entry(f"Failed to clean up temporary directory: {str(e)}", level="WARNING")
 
 
 if __name__ == "__main__":
