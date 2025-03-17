@@ -321,6 +321,20 @@ class TestRunner:
         self.logger.info(f"Using Django settings module: {env['DJANGO_SETTINGS_MODULE']}")
         
         try:
+            # First collect tests to verify we can find them
+            test_cases = self.collect_tests()
+            if not test_cases:
+                self.logger.warning("No test cases found")
+                return {
+                    "status": "success",
+                    "message": "No test cases found",
+                    "tests_found": 0,
+                    "tests_passed": 0,
+                    "tests_failed": 0,
+                    "tests_skipped": 0,
+                    "test_results": []
+                }
+            
             # Run pytest with verbose output
             result = self._run_in_venv(
                 ['pytest', '-v', '--disable-warnings'],
