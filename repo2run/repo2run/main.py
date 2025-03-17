@@ -129,9 +129,32 @@ def main():
         venv_path = repo_path / '.venv'
         
         try:
+            # Install Python 3.8 using uv
+            logger.info("Installing Python 3.8 using uv")
+            result = subprocess.run(
+                ['uv', 'python', 'install', '3.8'],
+                cwd=repo_path,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            logger.info(f"Python 3.8 installation result: {result.stdout}")
+            
+            # Pin Python version to 3.8 using uv python pin
+            logger.info("Pinning Python version to 3.8")
+            result = subprocess.run(
+                ['uv', 'python', 'pin', '3.8'],
+                cwd=repo_path,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            logger.info(f"Python version pinning result: {result.stdout}")
+            
+            # Now initialize the project or create venv
             if project_already_initialized:
                 logger.info("Project already initialized (pyproject.toml exists)")
-                # Just create the venv without initializing the project
+                # Just create the venv with Python 3.8
                 result = subprocess.run(
                     ['uv', 'venv', str(venv_path)],
                     cwd=repo_path,
@@ -140,6 +163,7 @@ def main():
                     text=True
                 )
             else:
+                # Initialize project with uv init
                 result = subprocess.run(
                     ['uv', 'init'],
                     cwd=repo_path,
@@ -147,7 +171,7 @@ def main():
                     capture_output=True,
                     text=True
                 )
-            logger.info(f"Virtual environment created at {venv_path}")
+            logger.info(f"Virtual environment created at {venv_path} with Python 3.8")
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to initialize project: {e.stderr}")
             raise RuntimeError(f"Failed to initialize project: {e.stderr}")
