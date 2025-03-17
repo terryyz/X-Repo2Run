@@ -78,6 +78,7 @@ def parse_arguments():
 def main():
     """Main entry point for the application."""
     start_time = time.time()
+    temp_dir = None
     
     # Parse arguments
     args = parse_arguments()
@@ -99,6 +100,9 @@ def main():
             repo_path = repo_manager.clone_repository(full_name, sha)
             repo_name = repo_path.name
             logger.info(f"Cloned repository {full_name} at {sha}")
+            # Store the temp directory for cleanup
+            if args.workspace_dir is None:
+                temp_dir = repo_path.parent
         else:
             local_path = Path(args.local).resolve()
             repo_path = repo_manager.setup_local_repository(local_path)
@@ -116,10 +120,72 @@ def main():
             f.write('\n'.join(unified_requirements))
         logger.info(f"Saved unified requirements to {requirements_path}")
         
-        # Install dependencies
-        installer = DependencyInstaller(repo_path, logger=logger)
-        venv_path = installer.create_virtual_environment()
-        installation_results = installer.install_requirements(unified_requirements, venv_path)
+        # Check if pyproject.toml already exists
+        pyproject_path = repo_path / "pyproject.toml"
+        project_already_initialized = pyproject_path.exists()
+        
+        # Initialize project with uv
+        logger.info("Initializing project with uv")
+        venv_path = repo_path / '.venv'
+        
+        try:
+            if project_already_initialized:
+                logger.info("Project already initialized (pyproject.toml exists)")
+                # Just create the venv without initializing the project
+                result = subprocess.run(
+                    ['uv', 'venv', str(venv_path)],
+                    cwd=repo_path,
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
+            else:
+                result = subprocess.run(
+                    ['uv', 'init', '--venv', str(venv_path)],
+                    cwd=repo_path,
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
+            logger.info(f"Virtual environment created at {venv_path}")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to initialize project: {e.stderr}")
+            raise RuntimeError(f"Failed to initialize project: {e.stderr}")
+        
+        # Install dependencies using uv add
+        logger.info(f"Installing {len(unified_requirements)} requirements using UV")
+        installation_results = []
+        
+        for req in unified_requirements:
+            try:
+                logger.info(f"Installing {req}")
+                
+                # Use uv add to install the requirement
+                cmd = ['uv', 'add', req, '--frozen']
+                
+                result = subprocess.run(
+                    cmd,
+                    cwd=repo_path,
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
+                
+                installation_results.append({
+                    'package': req,
+                    'success': True,
+                    'output': result.stdout
+                })
+                
+                logger.info(f"Successfully installed {req}")
+            except subprocess.CalledProcessError as e:
+                logger.warning(f"Failed to install {req}: {e.stderr}")
+                
+                installation_results.append({
+                    'package': req,
+                    'success': False,
+                    'error': e.stderr
+                })
         
         # Save installation results
         installation_results_path = output_dir / f"{repo_name}_installation_results.json"
@@ -127,9 +193,8 @@ def main():
             json.dump(installation_results, f, indent=2)
         logger.info(f"Saved installation results to {installation_results_path}")
         
-        # Run tests
-        test_runner = TestRunner(repo_path, venv_path, logger=logger)
-        test_results = test_runner.run_tests()
+        # Run tests using uv run
+        test_results = run_tests_with_uv(repo_path, logger)
         
         # Save test results
         test_results_path = output_dir / f"{repo_name}_test_results.json"
@@ -159,6 +224,35 @@ def main():
         logger.info(f"Process completed in {elapsed_time:.2f} seconds")
         logger.info(f"Summary saved to {summary_path}")
         
+        # Copy any important files from the repo to the output directory
+        try:
+            # Copy pyproject.toml if it exists
+            if pyproject_path.exists():
+                shutil.copy(pyproject_path, output_dir / f"{repo_name}_pyproject.toml")
+                logger.info(f"Copied pyproject.toml to {output_dir / f'{repo_name}_pyproject.toml'}")
+            
+            # Copy any test files found
+            test_files_dir = output_dir / f"{repo_name}_test_files"
+            test_files_dir.mkdir(exist_ok=True)
+            
+            # Find test files
+            test_files = []
+            test_files.extend(repo_path.glob("tests/**/*.py"))
+            test_files.extend(repo_path.glob("test/**/*.py"))
+            test_files.extend(repo_path.glob("test_*.py"))
+            test_files.extend(repo_path.glob("*_test.py"))
+            
+            for test_file in test_files:
+                rel_path = test_file.relative_to(repo_path)
+                dest_path = test_files_dir / rel_path
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(test_file, dest_path)
+            
+            if test_files:
+                logger.info(f"Copied {len(test_files)} test files to {test_files_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to copy some files: {str(e)}")
+        
         return 0
     
     except Exception as e:
@@ -170,6 +264,15 @@ def main():
             f.write(f"Error: {str(e)}\n")
         
         return 1
+    
+    finally:
+        # Clean up temporary directory if it was created
+        if temp_dir and args.workspace_dir is None:
+            try:
+                logger.info(f"Cleaning up temporary directory: {temp_dir}")
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception as e:
+                logger.warning(f"Failed to clean up temporary directory: {str(e)}")
 
 
 if __name__ == "__main__":

@@ -91,15 +91,30 @@ class DependencyInstaller:
         
         self.logger.info(f"Creating virtual environment at {venv_path}")
         
+        # Check if pyproject.toml already exists
+        pyproject_path = self.repo_path / "pyproject.toml"
+        project_already_initialized = pyproject_path.exists()
+        
         try:
-            # Use uv init to create a virtual environment and initialize the project
-            result = subprocess.run(
-                ['uv', 'init'],
-                cwd=self.repo_path,
-                check=True,
-                capture_output=True,
-                text=True
-            )
+            if project_already_initialized:
+                self.logger.info("Project already initialized (pyproject.toml exists)")
+                # Just create the venv without initializing the project
+                result = subprocess.run(
+                    ['uv', 'venv', str(venv_path)],
+                    cwd=self.repo_path,
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
+            else:
+                # Use uv init to create a virtual environment and initialize the project
+                result = subprocess.run(
+                    ['uv', 'init', '--venv', str(venv_path)],
+                    cwd=self.repo_path,
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
             
             self.logger.info(f"Virtual environment created at {venv_path}")
             return venv_path
