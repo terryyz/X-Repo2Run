@@ -187,8 +187,44 @@ class TestRunner:
         # Find the actual working directory to use
         working_dir = self._find_best_working_dir()
         self.logger.info(f"Using working directory for pytest: {working_dir}")
+        
+        # First, let's check what test files actually exist
+        test_files = []
+        test_files.extend(working_dir.glob("tests/**/*test*.py"))
+        test_files.extend(working_dir.glob("test/**/*test*.py"))
+        test_files.extend(working_dir.glob("test_*.py"))
+        test_files.extend(working_dir.glob("*_test.py"))
+        
+        if test_files:
+            self.logger.info(f"Found {len(test_files)} potential test files in {working_dir}:")
+            for test_file in test_files:
+                self.logger.info(f"  Test file: {test_file.relative_to(working_dir)}")
+                
+                # Check if the file is importable
+                try:
+                    with open(test_file, 'r') as f:
+                        first_few_lines = ''.join(f.readline() for _ in range(10))
+                    self.logger.debug(f"First few lines of {test_file.name}:\n{first_few_lines}")
+                except Exception as e:
+                    self.logger.warning(f"Could not read {test_file}: {str(e)}")
+        else:
+            self.logger.warning(f"No test files found in {working_dir}")
                 
         try:
+            # Try with more verbose output to see what's happening
+            self.logger.info("Running pytest with verbose collection")
+            verbose_result = subprocess.run(
+                ['pytest', '--collect-only', '-v'],
+                cwd=working_dir,
+                check=False,
+                capture_output=True,
+                text=True
+            )
+            self.logger.info(f"Verbose collection output:\n{verbose_result.stdout}")
+            if verbose_result.stderr:
+                self.logger.warning(f"Verbose collection stderr:\n{verbose_result.stderr}")
+            
+            # Now try the regular collection
             result = subprocess.run(
                 ['pytest', '--collect-only', '-q', '--disable-warnings'],
                 cwd=working_dir,
@@ -206,6 +242,22 @@ class TestRunner:
                 return test_cases
             else:
                 self.logger.warning(f"Failed to collect test cases: {result.stderr}")
+                
+                # Try running pytest directly on the test files
+                if test_files:
+                    self.logger.info("Trying to run pytest directly on test files")
+                    for test_file in test_files:
+                        direct_result = subprocess.run(
+                            ['pytest', str(test_file.relative_to(working_dir)), '--collect-only', '-v'],
+                            cwd=working_dir,
+                            check=False,
+                            capture_output=True,
+                            text=True
+                        )
+                        self.logger.info(f"Direct collection for {test_file.name}:\n{direct_result.stdout}")
+                        if direct_result.stderr:
+                            self.logger.warning(f"Direct collection stderr for {test_file.name}:\n{direct_result.stderr}")
+                
                 return []
         except Exception as e:
             self.logger.warning(f"Failed to collect test cases: {str(e)}")
@@ -276,11 +328,94 @@ class TestRunner:
         # Find the best working directory
         working_dir = self._find_best_working_dir()
         
+        # Find test files directly
+        test_files = []
+        test_files.extend(working_dir.glob("tests/**/*test*.py"))
+        test_files.extend(working_dir.glob("test/**/*test*.py"))
+        test_files.extend(working_dir.glob("test_*.py"))
+        test_files.extend(working_dir.glob("*_test.py"))
+        
         # Collect test cases
         test_cases = self.collect_tests()
         
         if not test_cases:
-            self.logger.info("No test cases found")
+            self.logger.info("No test cases found through pytest collection")
+            
+            # If we have test files but no test cases, try running the tests directly
+            if test_files:
+                self.logger.info(f"Found {len(test_files)} test files. Trying to run them directly.")
+                
+                # Run tests directly on the files
+                all_results = []
+                passed = 0
+                failed = 0
+                skipped = 0
+                
+                for test_file in test_files:
+                    self.logger.info(f"Running tests in {test_file.relative_to(working_dir)}")
+                    try:
+                        file_result = subprocess.run(
+                            ['pytest', str(test_file.relative_to(working_dir)), '-v'],
+                            cwd=working_dir,
+                            check=False,
+                            capture_output=True,
+                            text=True
+                        )
+                        
+                        # Parse results for this file
+                        file_passed = 0
+                        file_failed = 0
+                        file_skipped = 0
+                        file_results = []
+                        
+                        for line in file_result.stdout.splitlines():
+                            if ' PASSED ' in line:
+                                test_name = line.split(' PASSED ')[0].strip()
+                                file_results.append({
+                                    "name": test_name,
+                                    "status": "passed"
+                                })
+                                file_passed += 1
+                            elif ' FAILED ' in line:
+                                test_name = line.split(' FAILED ')[0].strip()
+                                file_results.append({
+                                    "name": test_name,
+                                    "status": "failed"
+                                })
+                                file_failed += 1
+                            elif ' SKIPPED ' in line:
+                                test_name = line.split(' SKIPPED ')[0].strip()
+                                file_results.append({
+                                    "name": test_name,
+                                    "status": "skipped"
+                                })
+                                file_skipped += 1
+                        
+                        passed += file_passed
+                        failed += file_failed
+                        skipped += file_skipped
+                        all_results.extend(file_results)
+                        
+                        self.logger.info(f"Results for {test_file.name}: {file_passed} passed, {file_failed} failed, {file_skipped} skipped")
+                    except Exception as e:
+                        self.logger.error(f"Error running tests in {test_file.name}: {str(e)}")
+                
+                if all_results:
+                    status = "success" if failed == 0 else "failure"
+                    message = f"{passed} passed, {failed} failed, {skipped} skipped (direct file execution)"
+                    
+                    self.logger.info(f"Test results: {message}")
+                    
+                    return {
+                        "status": status,
+                        "message": message,
+                        "tests_found": len(all_results),
+                        "tests_passed": passed,
+                        "tests_failed": failed,
+                        "tests_skipped": skipped,
+                        "test_results": all_results,
+                        "note": "Tests were run directly on files, not through pytest collection"
+                    }
             
             # Print out current directory and file listing for debugging
             try:
@@ -313,71 +448,71 @@ class TestRunner:
                 "tests_skipped": 0,
                 "test_results": []
             }
-        
-        # Run tests        
-        try:
-            result = subprocess.run(
-                ['pytest', '-v'],
-                cwd=working_dir,
-                check=False,
-                capture_output=True,
-                text=True
-            )
-            
-            # Parse test results
-            test_results = []
-            passed = 0
-            failed = 0
-            skipped = 0
-            
-            for line in result.stdout.splitlines():
-                if ' PASSED ' in line:
-                    test_name = line.split(' PASSED ')[0].strip()
-                    test_results.append({
-                        "name": test_name,
-                        "status": "passed"
-                    })
-                    passed += 1
-                elif ' FAILED ' in line:
-                    test_name = line.split(' FAILED ')[0].strip()
-                    test_results.append({
-                        "name": test_name,
-                        "status": "failed"
-                    })
-                    failed += 1
-                elif ' SKIPPED ' in line:
-                    test_name = line.split(' SKIPPED ')[0].strip()
-                    test_results.append({
-                        "name": test_name,
-                        "status": "skipped"
-                    })
-                    skipped += 1
-            
-            status = "success" if failed == 0 else "failure"
-            message = f"{passed} passed, {failed} failed, {skipped} skipped"
-            
-            self.logger.info(f"Test results: {message}")
-            
-            return {
-                "status": status,
-                "message": message,
-                "tests_found": len(test_cases),
-                "tests_passed": passed,
-                "tests_failed": failed,
-                "tests_skipped": skipped,
-                "test_results": test_results,
-                "stdout": result.stdout,
-                "stderr": result.stderr
-            }
-        except Exception as e:
-            self.logger.error(f"Failed to run tests: {str(e)}")
-            
-            return {
-                "status": "error",
-                "message": str(e),
-                "tests_found": len(test_cases),
-                "tests_passed": 0,
-                "tests_failed": 0,
-                "tests_skipped": 0,
-                "test_results": []
-            } 
+        else:
+            # Run tests        
+            try:
+                result = subprocess.run(
+                    ['pytest', '-v'],
+                    cwd=working_dir,
+                    check=False,
+                    capture_output=True,
+                    text=True
+                )
+                
+                # Parse test results
+                test_results = []
+                passed = 0
+                failed = 0
+                skipped = 0
+                
+                for line in result.stdout.splitlines():
+                    if ' PASSED ' in line:
+                        test_name = line.split(' PASSED ')[0].strip()
+                        test_results.append({
+                            "name": test_name,
+                            "status": "passed"
+                        })
+                        passed += 1
+                    elif ' FAILED ' in line:
+                        test_name = line.split(' FAILED ')[0].strip()
+                        test_results.append({
+                            "name": test_name,
+                            "status": "failed"
+                        })
+                        failed += 1
+                    elif ' SKIPPED ' in line:
+                        test_name = line.split(' SKIPPED ')[0].strip()
+                        test_results.append({
+                            "name": test_name,
+                            "status": "skipped"
+                        })
+                        skipped += 1
+                
+                status = "success" if failed == 0 else "failure"
+                message = f"{passed} passed, {failed} failed, {skipped} skipped"
+                
+                self.logger.info(f"Test results: {message}")
+                
+                return {
+                    "status": status,
+                    "message": message,
+                    "tests_found": len(test_cases),
+                    "tests_passed": passed,
+                    "tests_failed": failed,
+                    "tests_skipped": skipped,
+                    "test_results": test_results,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr
+                }
+            except Exception as e:
+                self.logger.error(f"Failed to run tests: {str(e)}")
+                
+                return {
+                    "status": "error",
+                    "message": str(e),
+                    "tests_found": len(test_cases),
+                    "tests_passed": 0,
+                    "tests_failed": 0,
+                    "tests_skipped": 0,
+                    "test_results": []
+                } 
