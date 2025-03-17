@@ -241,7 +241,7 @@ class TestRunner:
             # Try with more verbose output to see what's happening
             self.logger.info("Running pytest with verbose collection")
             verbose_result = subprocess.run(
-                [python_cmd, '-m', 'pytest', '--collect-only', '-v'],
+                ['pytest', '--collect-only', '-v'],
                 cwd=working_dir,
                 check=False,
                 capture_output=True,
@@ -254,7 +254,7 @@ class TestRunner:
             
             # Now try the regular collection
             result = subprocess.run(
-                [python_cmd, '-m', 'pytest', '--collect-only', '-q', '--disable-warnings'],
+                ['pytest', '--collect-only', '-q', '--disable-warnings'],
                 cwd=working_dir,
                 check=False,
                 capture_output=True,
@@ -277,7 +277,7 @@ class TestRunner:
                     self.logger.info("Trying to run pytest directly on test files")
                     for test_file in test_files:
                         direct_result = subprocess.run(
-                            [python_cmd, '-m', 'pytest', str(test_file.relative_to(working_dir)), '--collect-only', '-v'],
+                            ['pytest', str(test_file.relative_to(working_dir)), '--collect-only', '-v'],
                             cwd=working_dir,
                             check=False,
                             capture_output=True,
