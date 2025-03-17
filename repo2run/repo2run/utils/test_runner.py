@@ -134,13 +134,11 @@ class TestRunner:
         self.logger.info("Installing pytest using uv")
         
         try:
-            # For Python 3.12+, we need pytest 7.4.0 or newer which doesn't use the removed 'imp' module
-            pytest_spec = "pytest>=7.4.0" if sys.version_info.major == 3 and sys.version_info.minor >= 12 else "pytest"
-            self.logger.info(f"Installing {pytest_spec} for Python {sys.version_info.major}.{sys.version_info.minor}")
+            self.logger.info(f"Installing pytest for Python {sys.version_info.major}.{sys.version_info.minor}")
             
             # Use uv add to install pytest as a dev dependency
             result = subprocess.run(
-                ['uv', 'add', pytest_spec, '--dev'],
+                ['uv', 'add', 'pytest', '--dev', '--frozen'],
                 cwd=self.repo_path,
                 check=False,
                 capture_output=True,

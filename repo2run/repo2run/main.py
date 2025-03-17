@@ -120,6 +120,51 @@ def main():
             f.write('\n'.join(unified_requirements))
         logger.info(f"Saved unified requirements to {requirements_path}")
         
+        # Create a requirements.in file for uv pip compile
+        requirements_in_path = repo_path / "requirements.in"
+        with open(requirements_in_path, 'w') as f:
+            f.write('\n'.join(unified_requirements))
+        logger.info(f"Created requirements.in file at {requirements_in_path}")
+        
+        # Compile requirements with --resolution lowest to ensure compatibility with lower bounds
+        logger.info("Compiling requirements with --resolution lowest")
+        try:
+            compiled_result = subprocess.run(
+                ['uv', 'pip', 'compile', 'requirements.in', '--resolution', 'lowest', '--output-file', 'requirements.txt'],
+                cwd=repo_path,
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            logger.info("Successfully compiled requirements with lowest resolution")
+            
+            # Read the compiled requirements
+            compiled_requirements_path = repo_path / "requirements.txt"
+            if compiled_requirements_path.exists():
+                with open(compiled_requirements_path, 'r') as f:
+                    compiled_requirements_content = f.read()
+                    
+                # Save a copy to the output directory
+                with open(output_dir / f"{repo_name}_compiled_requirements.txt", 'w') as f:
+                    f.write(compiled_requirements_content)
+                
+                # Parse the compiled requirements to get exact versions
+                exact_requirements = []
+                for line in compiled_requirements_content.splitlines():
+                    # Skip comments and empty lines
+                    if line.strip() and not line.strip().startswith('#'):
+                        exact_requirements.append(line.strip())
+                
+                logger.info(f"Parsed {len(exact_requirements)} exact requirements with lowest versions")
+                
+                # Use these exact requirements for installation
+                unified_requirements = exact_requirements
+            else:
+                logger.warning("Compiled requirements.txt not found, using original requirements")
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Failed to compile requirements with lowest resolution: {e.stderr}")
+            logger.warning("Falling back to original requirements")
+        
         # Check if pyproject.toml already exists
         pyproject_path = repo_path / "pyproject.toml"
         project_already_initialized = pyproject_path.exists()
@@ -180,40 +225,49 @@ def main():
         logger.info(f"Installing {len(unified_requirements)} requirements using UV")
         installation_results = []
         
-        for req in unified_requirements:
+        # First, try to install all requirements at once from the compiled requirements.txt
+        if compiled_requirements_path.exists():
             try:
-                logger.info(f"Installing {req}")
+                logger.info("Installing all requirements from compiled requirements.txt")
+                cmd = ['uv', 'pip', 'install', '-r', 'requirements.txt', '--no-deps']
                 
-                # Use uv add to install the requirement with --frozen flag to skip dependency resolution
-                cmd = ['uv', 'add', req, '--frozen']
+                result = subprocess.run(
+                    cmd,
+                    cwd=repo_path,
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
                 
-                # First try with --frozen flag
-                try:
-                    result = subprocess.run(
-                        cmd,
-                        cwd=repo_path,
-                        check=True,
-                        capture_output=True,
-                        text=True
-                    )
-                    
+                logger.info("Successfully installed all requirements from compiled requirements.txt")
+                
+                # Mark all requirements as successfully installed
+                for req in unified_requirements:
                     installation_results.append({
                         'package': req,
                         'success': True,
-                        'output': result.stdout,
-                        'method': 'frozen'
+                        'output': "Installed via compiled requirements.txt",
+                        'method': 'compiled'
                     })
+            except subprocess.CalledProcessError as e:
+                logger.warning(f"Failed to install from compiled requirements.txt: {e.stderr}")
+                logger.warning("Falling back to individual package installation")
+                # Continue with individual package installation below
+        
+        # If we don't have a compiled requirements file or the bulk installation failed,
+        # install packages individually
+        if not installation_results:
+            for req in unified_requirements:
+                try:
+                    logger.info(f"Installing {req}")
                     
-                    logger.info(f"Successfully installed {req} with --frozen flag")
-                except subprocess.CalledProcessError as e:
-                    logger.warning(f"Failed to install {req} with --frozen flag: {e.stderr}")
+                    # Use uv add to install the requirement with --frozen flag to skip dependency resolution
+                    cmd = ['uv', 'add', req, '--frozen']
                     
-                    # If it fails with --frozen, try with additional flags
+                    # First try with --frozen flag
                     try:
-                        # Try with --no-deps as an alternative
-                        cmd_alt = ['uv', 'add', req, '--no-deps']
                         result = subprocess.run(
-                            cmd_alt,
+                            cmd,
                             cwd=repo_path,
                             check=True,
                             capture_output=True,
@@ -224,27 +278,50 @@ def main():
                             'package': req,
                             'success': True,
                             'output': result.stdout,
-                            'method': 'no-deps'
+                            'method': 'frozen'
                         })
                         
-                        logger.info(f"Successfully installed {req} with --no-deps flag")
-                    except subprocess.CalledProcessError as e2:
-                        logger.warning(f"Failed to install {req} with --no-deps flag: {e2.stderr}")
+                        logger.info(f"Successfully installed {req} with --frozen flag")
+                    except subprocess.CalledProcessError as e:
+                        logger.warning(f"Failed to install {req} with --frozen flag: {e.stderr}")
                         
-                        installation_results.append({
-                            'package': req,
-                            'success': False,
-                            'error': f"Failed with --frozen: {e.stderr}\nFailed with --no-deps: {e2.stderr}"
-                        })
-                
-            except Exception as e:
-                logger.warning(f"Unexpected error installing {req}: {str(e)}")
-                
-                installation_results.append({
-                    'package': req,
-                    'success': False,
-                    'error': str(e)
-                })
+                        # If it fails with --frozen, try with additional flags
+                        try:
+                            # Try with --no-deps as an alternative
+                            cmd_alt = ['uv', 'add', req, '--no-deps']
+                            result = subprocess.run(
+                                cmd_alt,
+                                cwd=repo_path,
+                                check=True,
+                                capture_output=True,
+                                text=True
+                            )
+                            
+                            installation_results.append({
+                                'package': req,
+                                'success': True,
+                                'output': result.stdout,
+                                'method': 'no-deps'
+                            })
+                            
+                            logger.info(f"Successfully installed {req} with --no-deps flag")
+                        except subprocess.CalledProcessError as e2:
+                            logger.warning(f"Failed to install {req} with --no-deps flag: {e2.stderr}")
+                            
+                            installation_results.append({
+                                'package': req,
+                                'success': False,
+                                'error': f"Failed with --frozen: {e.stderr}\nFailed with --no-deps: {e2.stderr}"
+                            })
+                    
+                except Exception as e:
+                    logger.warning(f"Unexpected error installing {req}: {str(e)}")
+                    
+                    installation_results.append({
+                        'package': req,
+                        'success': False,
+                        'error': str(e)
+                    })
         
         # Save installation results
         installation_results_path = output_dir / f"{repo_name}_installation_results.json"
