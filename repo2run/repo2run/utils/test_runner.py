@@ -134,11 +134,11 @@ class TestRunner:
         self.logger.info("Installing pytest using uv")
         
         try:
-            self.logger.info(f"Installing pytest for Python {sys.version_info.major}.{sys.version_info.minor}")
+            self.logger.info(f"Installing pytest for Python")
             
             # Use uv add to install pytest as a dev dependency
             result = subprocess.run(
-                ['uv', 'add', 'pytest', '--dev', '--frozen'],
+                ['uv', 'add', 'pytest', '--dev', '--frozen', '--resolution lowest-direct'],
                 cwd=self.repo_path,
                 check=False,
                 capture_output=True,

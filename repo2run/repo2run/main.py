@@ -271,7 +271,7 @@ def main():
                     logger.info(f"Installing {req}")
                     
                     # Use uv add to install the requirement with --frozen flag to skip dependency resolution
-                    cmd = ['uv', 'add', req, '--frozen']
+                    cmd = ['uv', 'add', req, '--frozen', '--resolution lowest-direct']
                     
                     # First try with --frozen flag
                     try:
