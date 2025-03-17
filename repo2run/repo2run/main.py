@@ -8,6 +8,19 @@ This script handles the workflow of:
 2. Extracting and unifying requirements
 3. Installing dependencies using UV
 4. Running tests
+
+Usage:
+    repo2run --repo user/repo sha --output-dir output_path [--overwrite] [--verbose]
+    repo2run --local path/to/repo --output-dir output_path [--overwrite] [--verbose]
+
+Options:
+    --repo FULL_NAME SHA    The full name of the repository (e.g., user/repo) and SHA
+    --local PATH            Local folder path to process
+    --output-dir DIR        Directory to store output files (default: output)
+    --workspace-dir DIR     Directory to use as workspace (default: temporary directory)
+    --timeout SECONDS       Timeout in seconds (default: 7200 - 2 hours)
+    --verbose               Enable verbose logging
+    --overwrite             Overwrite existing output directory if it exists
 """
 
 import argparse
@@ -71,6 +84,11 @@ def parse_arguments():
         action='store_true',
         help='Enable verbose logging'
     )
+    parser.add_argument(
+        '--overwrite',
+        action='store_true',
+        help='Overwrite existing output directory if it exists'
+    )
     
     return parser.parse_args()
 
@@ -109,6 +127,23 @@ def main():
             repo_name = repo_path.name
             logger.info(f"Set up local repository from {local_path}")
         
+        # Create a project directory in the output folder
+        project_dir = output_dir / repo_name
+        
+        # Check if project directory already exists
+        if project_dir.exists():
+            if args.overwrite:
+                logger.info(f"Project directory {project_dir} already exists. Overwriting as requested.")
+                # Remove the existing directory
+                shutil.rmtree(project_dir)
+            else:
+                logger.error(f"Project directory {project_dir} already exists. Use --overwrite to overwrite.")
+                return 1
+        
+        # Create the project directory
+        project_dir.mkdir(parents=True, exist_ok=False)
+        logger.info(f"Created project directory at {project_dir}")
+        
         # Extract dependencies
         dependency_extractor = DependencyExtractor(repo_path, logger=logger)
         requirements = dependency_extractor.extract_all_requirements()
@@ -119,11 +154,6 @@ def main():
         with open(requirements_path, 'w') as f:
             f.write('\n'.join(unified_requirements))
         logger.info(f"Saved unified requirements to {requirements_path}")
-        
-        # Create a project directory in the output folder
-        project_dir = output_dir / repo_name
-        project_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Created project directory at {project_dir}")
         
         # Define paths for configuration files in the output directory
         requirements_in_path = project_dir / "requirements.in"
@@ -376,7 +406,8 @@ def main():
             "tests_found": test_results["tests_found"],
             "tests_passed": test_results["tests_passed"],
             "status": "success" if test_results["status"] == "success" else "failure",
-            "project_directory": str(project_dir)
+            "project_directory": str(project_dir),
+            "overwrite_mode": args.overwrite
         }
         
         summary_path = output_dir / f"{repo_name}_summary.json"
