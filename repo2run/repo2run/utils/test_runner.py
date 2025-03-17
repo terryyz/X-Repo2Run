@@ -103,22 +103,8 @@ class TestRunner:
         """
         self.logger.info("Checking if pytest is installed")
         
-        # Get the Python interpreter from the virtual environment
-        python_path = self.venv_path / 'bin' / 'python'
-        if not python_path.exists():
-            self.logger.warning(f"Virtual environment Python not found at {python_path}. Using system Python.")
-            python_cmd = 'python'
-        else:
-            self.logger.info(f"Using Python from virtual environment: {python_path}")
-            python_cmd = str(python_path)
-                
         try:
-            result = subprocess.run(
-                [python_cmd, '-m', 'pytest', '--version'],
-                check=False,
-                capture_output=True,
-                text=True
-            )
+            result = self._run_in_venv(['pytest', '--version'])
             
             if result.returncode == 0:
                 self.logger.info(f"pytest is installed: {result.stdout.strip()}")
@@ -220,15 +206,6 @@ class TestRunner:
             self.logger.warning(f"No test files found in {working_dir}")
                 
         try:
-            # Get the Python interpreter from the virtual environment
-            python_path = self.venv_path / 'bin' / 'python'
-            if not python_path.exists():
-                self.logger.warning(f"Virtual environment Python not found at {python_path}. Using system Python.")
-                python_cmd = 'python'
-            else:
-                self.logger.info(f"Using Python from virtual environment: {python_path}")
-                python_cmd = str(python_path)
-            
             # Create a modified environment with PYTHONPATH set to include the working directory
             env = dict(os.environ)
             if 'PYTHONPATH' in env:
@@ -240,12 +217,9 @@ class TestRunner:
             
             # Try with more verbose output to see what's happening
             self.logger.info("Running pytest with verbose collection")
-            verbose_result = subprocess.run(
+            verbose_result = self._run_in_venv(
                 ['pytest', '--collect-only', '-v'],
                 cwd=working_dir,
-                check=False,
-                capture_output=True,
-                text=True,
                 env=env
             )
             self.logger.info(f"Verbose collection output:\n{verbose_result.stdout}")
@@ -253,12 +227,9 @@ class TestRunner:
                 self.logger.warning(f"Verbose collection stderr:\n{verbose_result.stderr}")
             
             # Now try the regular collection
-            result = subprocess.run(
+            result = self._run_in_venv(
                 ['pytest', '--collect-only', '-q', '--disable-warnings'],
                 cwd=working_dir,
-                check=False,
-                capture_output=True,
-                text=True,
                 env=env
             )
             
@@ -276,12 +247,9 @@ class TestRunner:
                 if test_files:
                     self.logger.info("Trying to run pytest directly on test files")
                     for test_file in test_files:
-                        direct_result = subprocess.run(
+                        direct_result = self._run_in_venv(
                             ['pytest', str(test_file.relative_to(working_dir)), '--collect-only', '-v'],
                             cwd=working_dir,
-                            check=False,
-                            capture_output=True,
-                            text=True,
                             env=env
                         )
                         self.logger.info(f"Direct collection for {test_file.name}:\n{direct_result.stdout}")
@@ -331,6 +299,77 @@ class TestRunner:
         # If we couldn't find a better directory, use the repo_path
         return self.repo_path
     
+    def _run_in_venv(self, command, cwd=None, env=None):
+        """
+        Run a command in the virtual environment by first activating it.
+        
+        Args:
+            command (list): Command to run as a list of strings.
+            cwd (Path, optional): Working directory. Defaults to None.
+            env (dict, optional): Environment variables. Defaults to None.
+            
+        Returns:
+            subprocess.CompletedProcess: Result of the command.
+        """
+        # Create a temporary shell script to activate the venv and run the command
+        activate_script = self.venv_path / 'bin' / 'activate'
+        
+        if not activate_script.exists():
+            self.logger.warning(f"Virtual environment activation script not found at {activate_script}")
+            # Fall back to running the command directly
+            return subprocess.run(
+                command,
+                cwd=cwd,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env
+            )
+        
+        # Create a shell script that activates the venv and runs the command
+        script_content = f"""#!/bin/bash
+source {activate_script}
+{' '.join(command)}
+"""
+        script_path = self.repo_path / '.run_in_venv.sh'
+        try:
+            with open(script_path, 'w') as f:
+                f.write(script_content)
+            os.chmod(script_path, 0o755)  # Make the script executable
+            
+            self.logger.info(f"Running command in virtual environment: {' '.join(command)}")
+            result = subprocess.run(
+                [str(script_path)],
+                cwd=cwd,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env
+            )
+            
+            # Clean up the temporary script
+            os.remove(script_path)
+            
+            return result
+        except Exception as e:
+            self.logger.error(f"Failed to run command in virtual environment: {str(e)}")
+            # Clean up the temporary script if it exists
+            if script_path.exists():
+                try:
+                    os.remove(script_path)
+                except:
+                    pass
+            
+            # Fall back to running the command directly
+            return subprocess.run(
+                command,
+                cwd=cwd,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=env
+            )
+    
     def run_tests(self):
         """
         Run tests using pytest.
@@ -357,15 +396,6 @@ class TestRunner:
         
         # Find the best working directory
         working_dir = self._find_best_working_dir()
-        
-        # Get the Python interpreter from the virtual environment
-        python_path = self.venv_path / 'bin' / 'python'
-        if not python_path.exists():
-            self.logger.warning(f"Virtual environment Python not found at {python_path}. Using system Python.")
-            python_cmd = 'python'
-        else:
-            self.logger.info(f"Using Python from virtual environment: {python_path}")
-            python_cmd = str(python_path)
         
         # Create a modified environment with PYTHONPATH set to include the working directory
         env = dict(os.environ)
@@ -402,12 +432,9 @@ class TestRunner:
                 for test_file in test_files:
                     self.logger.info(f"Running tests in {test_file.relative_to(working_dir)}")
                     try:
-                        file_result = subprocess.run(
-                            [python_cmd, '-m', 'pytest', str(test_file.relative_to(working_dir)), '-v'],
+                        file_result = self._run_in_venv(
+                            ['pytest', str(test_file.relative_to(working_dir)), '-v'],
                             cwd=working_dir,
-                            check=False,
-                            capture_output=True,
-                            text=True,
                             env=env
                         )
                         
@@ -500,12 +527,9 @@ class TestRunner:
         else:
             # Run tests        
             try:
-                result = subprocess.run(
-                    [python_cmd, '-m', 'pytest', '-v'],
+                result = self._run_in_venv(
+                    ['pytest', '-v'],
                     cwd=working_dir,
-                    check=False,
-                    capture_output=True,
-                    text=True,
                     env=env
                 )
                 
