@@ -110,18 +110,40 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Initialize log.jsonl file
-    log_jsonl_path = output_dir / "log.jsonl"
+    # Initialize results.jsonl file
+    results_jsonl_path = output_dir / "results.jsonl"
     
-    # Repository identifier (will be used as the key in the log.jsonl)
+    # Repository identifier (will be used as the key in the results.jsonl)
     repo_identifier = args.repo[0] if args.repo else str(args.local)
     
-    # Initialize result data structure
+    # Initialize result data structure with proper keys
     result_data = {
-        "repository": repo_identifier,
-        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "logs": [],
-        "status": "running"
+        "metadata": {
+            "repository": repo_identifier,
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "status": "running"
+        },
+        "configuration": {
+            "output_directory": str(output_dir),
+            "overwrite_mode": args.overwrite,
+            "timeout": args.timeout
+        },
+        "dependencies": {
+            "found": 0,
+            "installed": 0,
+            "details": []
+        },
+        "tests": {
+            "found": 0,
+            "passed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "details": []
+        },
+        "execution": {
+            "start_time": start_time,
+            "elapsed_time": 0
+        }
     }
     
     # Function to add log entries to the result data
@@ -178,8 +200,8 @@ def main():
                 add_log_entry(f"Project directory {project_dir} already exists. Use --overwrite to overwrite.", level="ERROR")
                 result_data["status"] = "error"
                 result_data["error"] = "Project directory already exists"
-                # Write the result to log.jsonl
-                with open(log_jsonl_path, "a") as f:
+                # Write the result to results.jsonl
+                with open(results_jsonl_path, "a") as f:
                     f.write(json.dumps(result_data) + "\n")
                 return 1
         
@@ -192,7 +214,8 @@ def main():
         dependency_extractor = DependencyExtractor(repo_path, logger=logger)
         requirements = dependency_extractor.extract_all_requirements()
         unified_requirements = dependency_extractor.unify_requirements(requirements)
-        result_data["requirements"] = unified_requirements
+        result_data["dependencies"]["found"] = len(unified_requirements)
+        result_data["dependencies"]["details"] = unified_requirements
         
         add_log_entry(f"Extracted {len(unified_requirements)} requirements")
         
@@ -303,8 +326,8 @@ def main():
             add_log_entry(f"Failed to initialize project: {e.stderr}", level="ERROR")
             result_data["status"] = "error"
             result_data["error"] = f"Failed to initialize project: {e.stderr}"
-            # Write the result to log.jsonl
-            with open(log_jsonl_path, "a") as f:
+            # Write the result to results.jsonl
+            with open(results_jsonl_path, "a") as f:
                 f.write(json.dumps(result_data) + "\n")
             raise RuntimeError(f"Failed to initialize project: {e.stderr}")
         
@@ -412,7 +435,7 @@ def main():
         
         # Store installation results in the result data
         result_data["installation_results"] = installation_results
-        result_data["dependencies_installed"] = sum(1 for r in installation_results if r["success"])
+        result_data["dependencies"]["installed"] = sum(1 for r in installation_results if r["success"])
         
         # Run tests using uv run
         # Copy necessary files from the original repo to the project directory for testing
@@ -434,27 +457,33 @@ def main():
         test_results = test_runner.run_tests()
         
         # Store test results in the result data
-        result_data["test_results"] = test_results
+        result_data["tests"]["found"] = test_results["tests_found"]
+        result_data["tests"]["passed"] = test_results["tests_passed"]
+        result_data["tests"]["failed"] = test_results["tests_failed"]
+        result_data["tests"]["skipped"] = test_results["tests_skipped"]
+        result_data["tests"]["details"] = test_results["test_results"]
         
         # Generate summary
         end_time = time.time()
         elapsed_time = end_time - start_time
         
         # Update result data with summary information
-        result_data["elapsed_time"] = elapsed_time
-        result_data["dependencies_found"] = len(unified_requirements)
-        result_data["tests_found"] = test_results["tests_found"]
-        result_data["tests_passed"] = test_results["tests_passed"]
+        result_data["execution"]["elapsed_time"] = elapsed_time
+        result_data["dependencies"]["installed"] = sum(1 for r in installation_results if r["success"])
+        result_data["tests"]["found"] = test_results["tests_found"]
+        result_data["tests"]["passed"] = test_results["tests_passed"]
+        result_data["tests"]["failed"] = test_results["tests_failed"]
+        result_data["tests"]["skipped"] = test_results["tests_skipped"]
         result_data["status"] = "success" if test_results["status"] == "success" else "failure"
         
         add_log_entry(f"Process completed in {elapsed_time:.2f} seconds")
         add_log_entry(f"Project configured in {project_dir}")
         
-        # Write the final result to log.jsonl
-        with open(log_jsonl_path, "a") as f:
+        # Write the final result to results.jsonl
+        with open(results_jsonl_path, "a") as f:
             f.write(json.dumps(result_data) + "\n")
         
-        add_log_entry(f"Results written to {log_jsonl_path}")
+        add_log_entry(f"Results written to {results_jsonl_path}")
         
         return 0
     
@@ -466,8 +495,8 @@ def main():
         result_data["status"] = "error"
         result_data["error"] = error_message
         
-        # Write the error result to log.jsonl
-        with open(log_jsonl_path, "a") as f:
+        # Write the error result to results.jsonl
+        with open(results_jsonl_path, "a") as f:
             f.write(json.dumps(result_data) + "\n")
         
         return 1
