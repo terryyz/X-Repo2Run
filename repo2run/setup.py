@@ -23,7 +23,7 @@ setup(
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
     ],
-    python_requires=">=3.9",
+    python_requires=">=3.10",
     install_requires=[
         "tomli>=2.0.0",
         "pyyaml>=6.0",

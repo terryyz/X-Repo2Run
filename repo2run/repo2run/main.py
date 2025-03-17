@@ -255,21 +255,21 @@ def main():
         add_log_entry("Initializing project with uv")
         
         try:
-            # Install Python 3.9 using uv
-            add_log_entry("Installing Python 3.9 using uv")
+            # Install Python 3.10 using uv
+            add_log_entry("Installing Python 3.10 using uv")
             result = subprocess.run(
-                ['uv', 'python', 'install', '3.9'],
+                ['uv', 'python', 'install', '3.10'],
                 cwd=project_dir,
                 check=True,
                 capture_output=True,
                 text=True
             )
-            add_log_entry(f"Python 3.9 installation result: {result.stdout}")
+            add_log_entry(f"Python 3.10 installation result: {result.stdout}")
             
-            # Pin Python version to 3.9 using uv python pin
-            add_log_entry("Pinning Python version to 3.9")
+            # Pin Python version to 3.10 using uv python pin
+            add_log_entry("Pinning Python version to 3.10")
             result = subprocess.run(
-                ['uv', 'python', 'pin', '3.9'],
+                ['uv', 'python', 'pin', '3.10'],
                 cwd=project_dir,
                 check=True,
                 capture_output=True,
@@ -280,7 +280,7 @@ def main():
             # Now initialize the project or create venv
             if project_already_initialized:
                 add_log_entry("Project already initialized (pyproject.toml exists)")
-                # Just create the venv with Python 3.9
+                # Just create the venv with Python 3.10
                 result = subprocess.run(
                     ['uv', 'venv', str(venv_path)],
                     cwd=project_dir,
@@ -297,7 +297,7 @@ def main():
                     capture_output=True,
                     text=True
                 )
-            add_log_entry(f"Virtual environment created at {venv_path} with Python 3.9")
+            add_log_entry(f"Virtual environment created at {venv_path} with Python 3.10")
             
             # Install setuptools with version constraint right after initialization
             add_log_entry("Installing setuptools<58.0.0")
