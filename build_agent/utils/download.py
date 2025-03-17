@@ -16,6 +16,7 @@
 # from apt_download import run_apt
 # from pip_download import run_pip
 import subprocess
+import os
 
 TIME_OUT_LABEL= ' seconds. Partial output:'
 
@@ -23,6 +24,23 @@ def match_timeout(text):
     if 'timeout' in text.lower() or 'timed out' in text.lower() or 'failed to fetch' in text.lower() or 'could not resolve' in text.lower():
         return True
     else:
+        return False
+
+def check_uv_installed():
+    """Check if UV is installed, and install it if not."""
+    try:
+        result = subprocess.run('uv --version', shell=True, check=False, text=True, capture_output=True)
+        if result.returncode == 0:
+            return True
+    except Exception:
+        pass
+    
+    try:
+        # Install UV using pip
+        install_cmd = 'pip install uv'
+        result = subprocess.run(install_cmd, shell=True, check=True, text=True, capture_output=True)
+        return True
+    except subprocess.CalledProcessError:
         return False
 
 def download(session, waiting_list, conflict_list):
@@ -37,18 +55,59 @@ def download(session, waiting_list, conflict_list):
         return -1
     if waiting_list.size() == 0:
         print('The waiting list is empty. There are currently no items to download. Please perform other operations.')
+    
+    # Check if UV is installed or can be installed
+    uv_available = check_uv_installed()
+    if uv_available:
+        print("UV is available and will be used for faster package installation.")
+    else:
+        print("UV is not available. Falling back to standard pip for package installation.")
+    
+    # Create a virtual environment for UV if it doesn't exist
+    venv_path = '.venv'
+    if uv_available and not os.path.exists(venv_path):
+        try:
+            print(f"Creating virtual environment at {venv_path} for UV...")
+            result = subprocess.run(['uv', 'venv', venv_path], check=True, text=True, capture_output=True)
+            print(f"Virtual environment created at {venv_path}")
+        except subprocess.CalledProcessError:
+            print("Failed to create virtual environment. UV will use system Python.")
+            uv_available = False
+    
     while waiting_list.size() > 0:
         pop_item = waiting_list.pop()
         success = False
         result = ''
         if pop_item.tool.strip().lower() == 'pip':
-            # success, result = run_pip(pop_item.package_name, pop_item.version_constraints)
-            command = f'python /home/tools/pip_download.py -p {pop_item.package_name}'
-            if pop_item.version_constraints and len(pop_item.version_constraints) > 0:
-                command += f' -v "{pop_item.version_constraints}"'
-            success, result = session.execute_simple(command)
-            # print(success)
-            # print(pop_item.othererror)
+            if uv_available:
+                # Use UV for pip installations
+                command = f'python /home/tools/pip_download.py -p {pop_item.package_name}'
+                if pop_item.version_constraints and len(pop_item.version_constraints) > 0:
+                    command += f' -v "{pop_item.version_constraints}"'
+                command += f' --venv {venv_path}'
+                print(f"Using UV to install {pop_item.package_name}{pop_item.version_constraints if pop_item.version_constraints else ''}")
+                success, result = session.execute_simple(command)
+            else:
+                # Fall back to standard pip
+                command = f'python /home/tools/pip_download.py -p {pop_item.package_name}'
+                if pop_item.version_constraints and len(pop_item.version_constraints) > 0:
+                    command += f' -v "{pop_item.version_constraints}"'
+                success, result = session.execute_simple(command)
+        elif pop_item.tool.strip().lower() == 'uv':
+            # Explicitly use UV
+            if uv_available:
+                command = f'python /home/tools/pip_download.py -p {pop_item.package_name}'
+                if pop_item.version_constraints and len(pop_item.version_constraints) > 0:
+                    command += f' -v "{pop_item.version_constraints}"'
+                command += f' --venv {venv_path}'
+                print(f"Using UV to install {pop_item.package_name}{pop_item.version_constraints if pop_item.version_constraints else ''}")
+                success, result = session.execute_simple(command)
+            else:
+                print(f"UV is not available. Falling back to pip for {pop_item.package_name}")
+                command = f'python /home/tools/pip_download.py -p {pop_item.package_name}'
+                if pop_item.version_constraints and len(pop_item.version_constraints) > 0:
+                    command += f' -v "{pop_item.version_constraints}"'
+                success, result = session.execute_simple(command)
         elif pop_item.tool.strip().lower() == 'apt':
             # success, result = run_apt(pop_item.package_name, pop_item.version_constraints)
             command = f'python /home/tools/apt_download.py -p {pop_item.package_name}'
@@ -106,7 +165,7 @@ def download(session, waiting_list, conflict_list):
         print('No third-party libraries failed to download in this round.')
     
     if len(tool_error) > 0:
-        print('In this round, the download tools for the following third-party libraries could not be found (only pip or apt can be selected).')
+        print('In this round, the download tools for the following third-party libraries could not be found (only pip, uv, or apt can be selected).')
         for item in tool_error:
             print(f'{item.package_name}{item.version_constraints if item.version_constraints else ""} (using tool {item.tool})')
     else:
@@ -120,6 +179,7 @@ if __name__ == '__main__':
     waiting_list = WaitingList()
     waiting_list.add('numpy', '>2.0,<3.0', 'pip')
     waiting_list.add('pytorch', None, 'pip')
+    waiting_list.add('requests', None, 'uv')  # Explicitly use UV
     waiting_list.add('tmux', None, 'apt')
     waiting_list.add('unknown', None, 'Pips')
     waiting_list.get_message()
