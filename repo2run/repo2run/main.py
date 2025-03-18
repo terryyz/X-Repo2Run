@@ -162,16 +162,10 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
     # Initialize results.jsonl file
     results_jsonl_path = output_dir / "results.jsonl"
     
-    # Repository identifier (will be used as the key in the results.jsonl)
-    repo_identifier = f"{repo_info[0]}_{repo_info[1]}" if repo_info else str(local_path)
-    
-    # Initialize result data structure with proper keys
+    # Initialize result data structure with temporary values - will update repository later
     result_data = {
-        "metadata": {
-            "repository": repo_identifier,
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "status": "running"
-        },
+        "repository": "pending",  # Will be updated after repo is initialized
+        "status": "running",
         "configuration": {
             "output_directory": str(output_dir),
             "overwrite_mode": args.overwrite,
@@ -227,21 +221,32 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         # Initialize repository
         repo_manager = RepoManager(workspace_dir=args.workspace_dir, logger=logger)
         
+        # Now that we have repo_manager, determine the repository identifier
         if repo_info:
             full_name, sha = repo_info
             repo_path = repo_manager.clone_repository(full_name, sha)
             repo_name = repo_path.name
             add_log_entry(f"Cloned repository {full_name} at {sha}", repo_name=repo_name)
             result_data["repository_name"] = repo_name
+            # Update the repository identifier for GitHub repos - use a simpler format
+            repo_identifier = f"{full_name.replace('/', '_')}_{sha[:7]}"  # Use shorter SHA
         else:
             local_path = Path(local_path).resolve()
             repo_path = repo_manager.setup_local_repository(local_path)
             repo_name = repo_path.name
             add_log_entry(f"Set up local repository from {local_path}", repo_name=repo_name)
             result_data["repository_name"] = repo_name
+            # Update the repository identifier for local paths - use just the directory name to avoid long paths
+            repo_identifier = repo_name
+        
+        # Update the repository identifier
+        result_data["repository"] = repo_identifier
         
         # Create a project directory in the output folder
         project_dir = output_dir / repo_identifier
+        
+        add_log_entry(f"Using project identifier: {repo_identifier}")
+        add_log_entry(f"Project will be processed in: {project_dir}")
         
         # Check if project directory already exists
         if project_dir.exists():
@@ -269,42 +274,43 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             # Ensure the project directory exists
             project_dir.mkdir(parents=True, exist_ok=True)
             
-            # List all items in the source repository
-            source_items = list(os.listdir(repo_path))
-            add_log_entry(f"Found {len(source_items)} items to copy: {source_items}")
+            # Use a straight copy rather than recursive copy to avoid path length issues
+            excluded_dirs = ['.git', '.venv', '__pycache__', '.pytest_cache']
             
-            for item in source_items:
-                src = repo_path / item
-                dst = project_dir / item
-                
-                # Log each item being copied
-                add_log_entry(f"Copying {src} to {dst}")
-                
+            # Function to safely copy files without exceeding path length limits
+            def safe_copy(src, dst):
                 try:
-                    # Remove existing destination if it exists
-                    if dst.exists():
-                        if dst.is_dir():
-                            shutil.rmtree(dst)
-                        else:
-                            dst.unlink()
-                    
-                    # Copy item
                     if src.is_dir():
-                        shutil.copytree(src, dst)
+                        if src.name in excluded_dirs:
+                            add_log_entry(f"Skipping excluded directory: {src.name}")
+                            return
+                        # Create the destination directory if it doesn't exist
+                        dst.mkdir(parents=True, exist_ok=True)
+                        # Copy each item in the directory
+                        for item in src.iterdir():
+                            # Skip if the path is getting too long
+                            if len(str(dst / item.name)) > 200:
+                                add_log_entry(f"Skipping {item.name} - path too long", level="WARNING")
+                                continue
+                            safe_copy(item, dst / item.name)
                     else:
+                        # Copy the file
                         shutil.copy2(src, dst)
-                    
-                    add_log_entry(f"Successfully copied {item}")
-                
-                except Exception as copy_error:
-                    add_log_entry(f"Error copying {item}: {copy_error}", level="WARNING")
+                except Exception as e:
+                    add_log_entry(f"Error copying {src.name}: {e}", level="WARNING")
+            
+            # Use the safe_copy function to copy the repository
+            safe_copy(repo_path, project_dir)
             
             # Verify copy
-            copied_items = list(os.listdir(project_dir))
-            add_log_entry(f"Copied {len(copied_items)} items to project directory: {copied_items}")
+            try:
+                copied_items = list(os.listdir(project_dir))
+                add_log_entry(f"Copied {len(copied_items)} items to project directory: {copied_items}")
+            except Exception as e:
+                add_log_entry(f"Error listing items in project directory: {e}", level="WARNING")
             
-            # Update repo_path to point to the new location in the output directory
-            repo_path = project_dir
+            # Set working_dir to project_dir for all subsequent operations
+            working_dir = project_dir
         
         except Exception as e:
             add_log_entry(f"Critical error during repository copy: {e}", level="ERROR")
@@ -317,8 +323,8 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             
             raise RuntimeError(f"Failed to copy repository: {e}")
         
-        # Extract dependencies
-        dependency_extractor = DependencyExtractor(repo_path, logger=logger)
+        # Extract dependencies - use the working_dir (project_dir) instead of repo_path
+        dependency_extractor = DependencyExtractor(working_dir, logger=logger)
         requirements = dependency_extractor.extract_all_requirements()
         unified_requirements = dependency_extractor.unify_requirements(requirements)
         result_data["dependencies"]["found"] = len(unified_requirements)
@@ -327,10 +333,10 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         add_log_entry(f"Extracted {len(unified_requirements)} requirements")
         
         # Define paths for configuration files in the output directory
-        requirements_in_path = project_dir / "requirements.in"
-        compiled_requirements_path = project_dir / "requirements.txt"
-        pyproject_path = project_dir / "pyproject.toml"
-        venv_path = project_dir / '.venv'
+        requirements_in_path = working_dir / "requirements.in"
+        compiled_requirements_path = working_dir / "requirements.txt"
+        pyproject_path = working_dir / "pyproject.toml"
+        venv_path = working_dir / '.venv'
         
         # Convert to absolute paths to ensure consistency
         requirements_in_path = requirements_in_path.absolute()
@@ -352,7 +358,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             try:
                 compiled_result = subprocess.run(
                     ['uv', 'pip', 'compile', 'requirements.in', '--resolution', 'lowest', '--output-file', 'requirements.txt'],
-                    cwd=project_dir,
+                    cwd=working_dir,
                     check=True,
                     capture_output=True,
                     text=True
@@ -407,7 +413,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                 add_log_entry("Installing Python 3.10 using uv")
                 result = subprocess.run(
                     ['uv', 'python', 'install', '3.10'],
-                    cwd=project_dir,
+                    cwd=working_dir,
                     check=True,
                     capture_output=True,
                     text=True
@@ -418,7 +424,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                 add_log_entry("Pinning Python version to 3.10")
                 result = subprocess.run(
                     ['uv', 'python', 'pin', '3.10'],
-                    cwd=project_dir,
+                    cwd=working_dir,
                     check=True,
                     capture_output=True,
                     text=True
@@ -431,7 +437,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                     # Just create the venv with Python 3.10
                     result = subprocess.run(
                         ['uv', 'venv', str(venv_path)],
-                        cwd=project_dir,
+                        cwd=working_dir,
                         check=True,
                         capture_output=True,
                         text=True
@@ -440,7 +446,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                     # Initialize project with uv init
                     result = subprocess.run(
                         ['uv', 'init'],
-                        cwd=project_dir,
+                        cwd=working_dir,
                         check=True,
                         capture_output=True,
                         text=True
@@ -461,7 +467,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                     add_log_entry("Installing package in development mode (pip install -e .)")
                     result = subprocess.run(
                         [str(venv_path) + '/bin/pip', 'install', '-e', '.'],
-                        cwd=project_dir,
+                        cwd=working_dir,
                         check=True,
                         capture_output=True,
                         text=True
@@ -472,7 +478,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                     add_log_entry("Continuing without development mode installation", level="WARNING")
                 
                 # Install dependencies
-                dependency_installer = DependencyInstaller(project_dir, use_uv=args.use_uv, logger=logger)
+                dependency_installer = DependencyInstaller(working_dir, use_uv=args.use_uv, logger=logger)
                 add_log_entry(f"Installing {len(unified_requirements)} requirements using {'UV' if args.use_uv else 'pip'}")
                 add_log_entry(f"Virtual environment path: {venv_path}, exists: {venv_path.exists()}")
                 
@@ -586,7 +592,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                             add_log_entry("Installing package in development mode (pip install -e .)")
                             result = subprocess.run(
                                 [str(pip_path), 'install', '-e', '.'],
-                                cwd=project_dir,
+                                cwd=working_dir,
                                 check=True,
                                 capture_output=True,
                                 text=True
@@ -613,7 +619,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                 raise RuntimeError(f"Failed to initialize project with venv: {str(e)}")
             
             # Install dependencies
-            dependency_installer = DependencyInstaller(project_dir, use_uv=args.use_uv, logger=logger)
+            dependency_installer = DependencyInstaller(working_dir, use_uv=args.use_uv, logger=logger)
             add_log_entry(f"Installing {len(unified_requirements)} requirements using {'UV' if args.use_uv else 'pip'}")
             add_log_entry(f"Virtual environment path: {venv_path}, exists: {venv_path.exists()}")
             
@@ -641,7 +647,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             add_log_entry("Running in collect-only mode", level="INFO")
             
             # Run test collection
-            test_runner = TestRunner(project_dir, venv_path=venv_path, use_uv=args.use_uv, logger=logger)
+            test_runner = TestRunner(working_dir, venv_path=venv_path, use_uv=args.use_uv, logger=logger)
             
             # Collect tests
             try:
@@ -677,22 +683,11 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                 return 1
         
         # Run tests
-        # Copy necessary files from the original repo to the project directory for testing
-        add_log_entry("Copying source files from repository to project directory for testing")
-        try:
-            # Copy Python files and directories, excluding .git, .venv, etc.
-            for item in repo_path.glob('*'):
-                if item.name not in ['.git', '.venv', '__pycache__', '.pytest_cache']:
-                    if item.is_dir():
-                        shutil.copytree(item, project_dir / item.name, dirs_exist_ok=True)
-                    else:
-                        shutil.copy(item, project_dir / item.name)
-            add_log_entry("Source files copied successfully")
-        except Exception as e:
-            add_log_entry(f"Error copying source files: {str(e)}", level="WARNING")
+        # Ensure we're using working_dir for operations
+        add_log_entry("Using project directory for testing")
         
         # Run tests in the project directory
-        test_runner = TestRunner(project_dir, venv_path=venv_path, use_uv=args.use_uv, logger=logger)
+        test_runner = TestRunner(working_dir, venv_path=venv_path, use_uv=args.use_uv, logger=logger)
         add_log_entry("Looking for tests in the project's code (excluding virtual environment)")
         
         # Check for project-specific tests first
@@ -748,7 +743,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         add_log_entry(f"Test counts before final update: found={result_data['tests']['found']}, passed={result_data['tests']['passed']}, failed={result_data['tests']['failed']}, skipped={result_data['tests']['skipped']}")
         
         add_log_entry(f"Process completed in {elapsed_time:.2f} seconds")
-        add_log_entry(f"Project configured in {project_dir}")
+        add_log_entry(f"Project configured in {working_dir}")
         
         # Write the final result to results.jsonl
         with open(results_jsonl_path, "a") as f:
