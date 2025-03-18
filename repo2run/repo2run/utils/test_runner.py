@@ -75,10 +75,23 @@ class TestRunner:
             "**/*_test.py"
         ]
         
+        # Files to exclude (paths containing these shouldn't be included)
+        exclude_patterns = ['.venv', 'site-packages', 'dist-packages']
+        
         for pattern in test_patterns:
             found_files = list(self.repo_path.glob(pattern))
-            self.logger.info(f"Pattern {pattern} found {len(found_files)} files")
-            test_files.extend(found_files)
+            
+            # Filter out files from exclude patterns
+            filtered_files = []
+            for file_path in found_files:
+                relative_path = file_path.relative_to(self.repo_path)
+                should_exclude = any(excl in str(relative_path) for excl in exclude_patterns)
+                
+                if not should_exclude:
+                    filtered_files.append(file_path)
+            
+            self.logger.info(f"Pattern {pattern} found {len(filtered_files)} files (after filtering)")
+            test_files.extend(filtered_files)
         
         # Remove duplicates and sort
         test_files = sorted(set(test_files))
@@ -559,9 +572,10 @@ class TestRunner:
                 tests_found = len(collected["tests"])
             else:
                 # If test collection failed, use number of test files instead
+                test_files = self.find_tests()
                 tests_found = len(test_files)
             
-            if "error" in result:
+            if stderr and "error" in stderr.lower():
                 # All tests failed if there was an error
                 tests_failed = tests_found
             elif "no tests ran" in stdout.lower():
@@ -603,6 +617,9 @@ class TestRunner:
         # Save the last failure message if we were capturing one
         if current_test and capturing_message:
             failure_messages[current_test] = "\n".join(message_lines)
+        
+        # Get test files to create results for
+        test_files = self.find_tests()
         
         # Create test results
         for test_file in test_files:
