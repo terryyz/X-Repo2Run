@@ -446,9 +446,18 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                 
                 # Install the package in development mode
                 try:
+                    add_log_entry("Installing Cython")
+                    result = subprocess.run(
+                        [str(venv_path) + '/bin/pip', 'install', 'Cython'],
+                        check=True,
+                        capture_output=True,
+                        text=True
+                    )
+                    add_log_entry(f"Successfully installed Cython: {result.stdout.strip()}")
+
                     add_log_entry("Installing package in development mode (pip install -e .)")
                     result = subprocess.run(
-                        ['uv', 'pip', 'install', '-e', '.'],
+                        [str(venv_path) + '/bin/pip', 'install', '-e', '.'],
                         cwd=project_dir,
                         check=True,
                         capture_output=True,
@@ -456,9 +465,60 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                     )
                     add_log_entry(f"Successfully installed package in development mode: {result.stdout.strip()}")
                 except subprocess.CalledProcessError as e:
-                    add_log_entry(f"Failed to install package in development mode: {e.stderr}", level="WARNING")
+                    add_log_entry(f"Failed to install Cython or package in development mode: {e.stderr}", level="WARNING")
                     add_log_entry("Continuing without development mode installation", level="WARNING")
                 
+                # Install dependencies
+                dependency_installer = DependencyInstaller(project_dir, use_uv=args.use_uv, logger=logger)
+                add_log_entry(f"Installing {len(unified_requirements)} requirements using {'UV' if args.use_uv else 'pip'}")
+                add_log_entry(f"Virtual environment path: {venv_path}, exists: {venv_path.exists()}")
+                
+                # Check if pip exists in the virtual environment
+                if not args.use_uv:
+                    if sys.platform == 'win32':
+                        pip_path = venv_path / 'Scripts' / 'pip.exe'
+                    else:
+                        pip_path = venv_path / 'bin' / 'pip'
+                    
+                    add_log_entry(f"Checking pip path: {pip_path}, exists: {pip_path.exists()}")
+                    
+                    if not pip_path.exists():
+                        add_log_entry(f"pip not found at {pip_path}, trying to install it", level="WARNING")
+                        try:
+                            python_path = venv_path / 'bin' / 'python' if not sys.platform == 'win32' else venv_path / 'Scripts' / 'python.exe'
+                            
+                            if python_path.exists():
+                                add_log_entry(f"Python found at {python_path}, using it to install pip")
+                                subprocess.run(
+                                    [str(python_path), '-m', 'ensurepip', '--upgrade'],
+                                    check=True,
+                                    capture_output=True,
+                                    text=True
+                                )
+                                add_log_entry("Successfully installed pip using ensurepip")
+                            else:
+                                add_log_entry(f"Python not found at {python_path}", level="ERROR")
+                        except Exception as e:
+                            add_log_entry(f"Failed to install pip: {str(e)}", level="ERROR")
+                
+                # Now install requirements
+                installation_results = dependency_installer.install_requirements(unified_requirements, venv_path)
+                
+                # Store installation results in the result data
+                result_data["installation_results"] = installation_results
+                result_data["dependencies"]["installed"] = sum(1 for r in installation_results if r["success"])
+                
+                # Check if all dependencies were successfully installed
+                if result_data["dependencies"]["installed"] < len(unified_requirements):
+                    add_log_entry(f"Failed to install all dependencies. Installed {result_data['dependencies']['installed']} out of {len(unified_requirements)} requirements", level="ERROR")
+                    result_data["status"] = "failure"
+                    result_data["error"] = "Not all dependencies could be installed"
+                    
+                    # Write the result to results.jsonl
+                    with open(results_jsonl_path, "a") as f:
+                        f.write(json.dumps(result_data) + "\n")
+                    
+                    return 1
             except subprocess.CalledProcessError as e:
                 add_log_entry(f"Failed to initialize project with UV: {e.stderr}", level="ERROR")
                 result_data["status"] = "error"
@@ -510,26 +570,28 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                         add_log_entry(f"Successfully upgraded pip: {result.stdout.strip()}")
                         
                         # Install the package in development mode
-                        add_log_entry("Installing package in development mode (pip install -e .)")
-                        
-                        install_editable_cmd = [
-                            str(pip_path),
-                            'install',
-                            '-e',
-                            '.'
-                        ]
-                        
-                        add_log_entry(f"Running pip with command: {' '.join(install_editable_cmd)}")
-                        
-                        result = subprocess.run(
-                            install_editable_cmd,
-                            cwd=project_dir,
-                            check=True,
-                            capture_output=True,
-                            text=True
-                        )
-                        
-                        add_log_entry(f"Successfully installed package in development mode: {result.stdout.strip()}")
+                        try:
+                            add_log_entry("Installing Cython")
+                            result = subprocess.run(
+                                [str(pip_path), 'install', 'Cython'],
+                                check=True,
+                                capture_output=True,
+                                text=True
+                            )
+                            add_log_entry(f"Successfully installed Cython: {result.stdout.strip()}")
+
+                            add_log_entry("Installing package in development mode (pip install -e .)")
+                            result = subprocess.run(
+                                [str(pip_path), 'install', '-e', '.'],
+                                cwd=project_dir,
+                                check=True,
+                                capture_output=True,
+                                text=True
+                            )
+                            add_log_entry(f"Successfully installed package in development mode: {result.stdout.strip()}")
+                        except subprocess.CalledProcessError as e:
+                            add_log_entry(f"Failed to install Cython or package in development mode: {e.stderr}", level="WARNING")
+                            add_log_entry("Continuing without development mode installation", level="WARNING")
                     except subprocess.CalledProcessError as e:
                         add_log_entry(f"Failed to upgrade pip or install package in development mode: {e.stderr}", level="WARNING")
                     except Exception as e:
@@ -546,58 +608,6 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                 with open(results_jsonl_path, "a") as f:
                     f.write(json.dumps(result_data) + "\n")
                 raise RuntimeError(f"Failed to initialize project with venv: {str(e)}")
-        
-        # Install dependencies
-        dependency_installer = DependencyInstaller(project_dir, use_uv=args.use_uv, logger=logger)
-        add_log_entry(f"Installing {len(unified_requirements)} requirements using {'UV' if args.use_uv else 'pip'}")
-        add_log_entry(f"Virtual environment path: {venv_path}, exists: {venv_path.exists()}")
-        
-        # Check if pip exists in the virtual environment
-        if not args.use_uv:
-            if sys.platform == 'win32':
-                pip_path = venv_path / 'Scripts' / 'pip.exe'
-            else:
-                pip_path = venv_path / 'bin' / 'pip'
-            
-            add_log_entry(f"Checking pip path: {pip_path}, exists: {pip_path.exists()}")
-            
-            if not pip_path.exists():
-                add_log_entry(f"pip not found at {pip_path}, trying to install it", level="WARNING")
-                try:
-                    python_path = venv_path / 'bin' / 'python' if not sys.platform == 'win32' else venv_path / 'Scripts' / 'python.exe'
-                    
-                    if python_path.exists():
-                        add_log_entry(f"Python found at {python_path}, using it to install pip")
-                        subprocess.run(
-                            [str(python_path), '-m', 'ensurepip', '--upgrade'],
-                            check=True,
-                            capture_output=True,
-                            text=True
-                        )
-                        add_log_entry("Successfully installed pip using ensurepip")
-                    else:
-                        add_log_entry(f"Python not found at {python_path}", level="ERROR")
-                except Exception as e:
-                    add_log_entry(f"Failed to install pip: {str(e)}", level="ERROR")
-        
-        # Now install requirements
-        installation_results = dependency_installer.install_requirements(unified_requirements, venv_path)
-        
-        # Store installation results in the result data
-        result_data["installation_results"] = installation_results
-        result_data["dependencies"]["installed"] = sum(1 for r in installation_results if r["success"])
-        
-        # Check if all dependencies were successfully installed
-        if result_data["dependencies"]["installed"] < len(unified_requirements):
-            add_log_entry(f"Failed to install all dependencies. Installed {result_data['dependencies']['installed']} out of {len(unified_requirements)} requirements", level="ERROR")
-            result_data["status"] = "failure"
-            result_data["error"] = "Not all dependencies could be installed"
-            
-            # Write the result to results.jsonl
-            with open(results_jsonl_path, "a") as f:
-                f.write(json.dumps(result_data) + "\n")
-            
-            return 1
         
         # If collect-only mode is enabled, only collect tests without running them
         if args.collect_only:
