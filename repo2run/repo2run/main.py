@@ -10,18 +10,26 @@ This script handles the workflow of:
 4. Running tests
 
 Usage:
+    # Single repository/directory mode:
     repo2run --repo user/repo sha --output-dir output_path [--overwrite] [--verbose]
     repo2run --local path/to/repo --output-dir output_path [--overwrite] [--verbose]
+
+    # Multiprocessing mode:
+    repo2run --repo-list repos.txt --output-dir output_path [--overwrite] [--verbose] [--num-workers N]
+    repo2run --local-list dirs.txt --output-dir output_path [--overwrite] [--verbose] [--num-workers N]
 
 Options:
     --repo FULL_NAME SHA    The full name of the repository (e.g., user/repo) and SHA
     --local PATH            Local folder path to process
-    --output-dir DIR        Directory to store output files (default: output)
-    --workspace-dir DIR     Directory to use as workspace (default: temporary directory)
-    --timeout SECONDS       Timeout in seconds (default: 7200 - 2 hours)
-    --verbose               Enable verbose logging
-    --overwrite             Overwrite existing output directory if it exists
-    --use-uv                Use UV for dependency management (default: False, use pip/venv)
+    --repo-list FILE       Text file containing list of repositories (format: user/repo sha)
+    --local-list FILE      Text file containing list of local directories
+    --output-dir DIR       Directory to store output files (default: output)
+    --workspace-dir DIR    Directory to use as workspace (default: temporary directory)
+    --timeout SECONDS      Timeout in seconds (default: 7200 - 2 hours)
+    --verbose             Enable verbose logging
+    --overwrite           Overwrite existing output directory if it exists
+    --use-uv             Use UV for dependency management (default: False, use pip/venv)
+    --num-workers N       Number of worker processes for parallel processing (default: number of CPU cores)
 """
 
 import argparse
@@ -32,7 +40,9 @@ import subprocess
 import sys
 import time
 import datetime
+import multiprocessing
 from pathlib import Path
+from typing import List, Tuple, Optional
 
 from repo2run.utils.repo_manager import RepoManager
 from repo2run.utils.dependency_extractor import DependencyExtractor
@@ -60,6 +70,18 @@ def parse_arguments():
         type=str, 
         metavar='PATH',
         help='Local folder path to process'
+    )
+    source_group.add_argument(
+        '--repo-list',
+        type=str,
+        metavar='FILE',
+        help='Text file containing list of repositories (format: user/repo sha)'
+    )
+    source_group.add_argument(
+        '--local-list',
+        type=str,
+        metavar='FILE',
+        help='Text file containing list of local directories'
     )
     
     # Additional arguments
@@ -96,17 +118,29 @@ def parse_arguments():
         action='store_true',
         help='Use UV for dependency management (default: False, use pip/venv)'
     )
+    parser.add_argument(
+        '--num-workers',
+        type=int,
+        default=multiprocessing.cpu_count(),
+        help='Number of worker processes for parallel processing (default: number of CPU cores)'
+    )
     
     return parser.parse_args()
 
 
-def main():
-    """Main entry point for the application."""
+def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str, str]] = None, local_path: Optional[str] = None) -> int:
+    """Process a single repository or local directory.
+    
+    Args:
+        args: Command line arguments
+        repo_info: Tuple of (full_name, sha) for repository mode
+        local_path: Path to local directory for local mode
+    
+    Returns:
+        int: Exit code (0 for success, 1 for failure)
+    """
     start_time = time.time()
     temp_dir = None
-    
-    # Parse arguments
-    args = parse_arguments()
     
     # Setup logging
     logger = setup_logger(verbose=args.verbose)
@@ -120,7 +154,7 @@ def main():
     results_jsonl_path = output_dir / "results.jsonl"
     
     # Repository identifier (will be used as the key in the results.jsonl)
-    repo_identifier = args.repo[0] if args.repo else str(args.local)
+    repo_identifier = f"{repo_info[0]}_{repo_info[1]}" if repo_info else str(local_path)
     
     # Initialize result data structure with proper keys
     result_data = {
@@ -184,8 +218,8 @@ def main():
         # Initialize repository
         repo_manager = RepoManager(workspace_dir=args.workspace_dir, logger=logger)
         
-        if args.repo:
-            full_name, sha = args.repo
+        if repo_info:
+            full_name, sha = repo_info
             repo_path = repo_manager.clone_repository(full_name, sha)
             repo_name = repo_path.name
             add_log_entry(f"Cloned repository {full_name} at {sha}", repo_name=repo_name)
@@ -194,7 +228,7 @@ def main():
             if args.workspace_dir is None:
                 temp_dir = repo_path.parent
         else:
-            local_path = Path(args.local).resolve()
+            local_path = Path(local_path).resolve()
             repo_path = repo_manager.setup_local_repository(local_path)
             repo_name = repo_path.name
             add_log_entry(f"Set up local repository from {local_path}", repo_name=repo_name)
@@ -571,11 +605,6 @@ def main():
         with open(results_jsonl_path, "a") as f:
             f.write(json.dumps(result_data) + "\n")
         
-        # Optionally save the full logs with timestamps and levels to a separate file
-        # full_logs_path = output_dir / "full_logs.jsonl"
-        # with open(full_logs_path, "a") as f:
-        #     f.write(json.dumps({"repository": repo_identifier, "full_logs": full_logs}) + "\n")
-        
         add_log_entry(f"Results written to {results_jsonl_path}")
         
         return 0
@@ -602,6 +631,98 @@ def main():
                 shutil.rmtree(temp_dir, ignore_errors=True)
             except Exception as e:
                 add_log_entry(f"Failed to clean up temporary directory: {str(e)}", level="WARNING")
+
+
+def process_repo_list(args: argparse.Namespace) -> int:
+    """Process a list of repositories in parallel.
+    
+    Args:
+        args: Command line arguments
+    
+    Returns:
+        int: Exit code (0 for success, 1 for failure)
+    """
+    # Read the repository list file
+    with open(args.repo_list, 'r') as f:
+        repo_lines = f.readlines()
+    
+    # Parse repository information
+    repo_infos = []
+    for line in repo_lines:
+        line = line.strip()
+        if line and not line.startswith('#'):
+            try:
+                full_name, sha = line.split()
+                repo_infos.append((full_name, sha))
+            except ValueError:
+                print(f"Invalid line in repository list: {line}")
+                return 1
+    
+    if not repo_infos:
+        print("No valid repositories found in the list")
+        return 1
+    
+    # Create a pool of worker processes
+    with multiprocessing.Pool(processes=args.num_workers) as pool:
+        # Process repositories in parallel
+        results = pool.starmap(
+            process_single_repo,
+            [(args, repo_info, None) for repo_info in repo_infos]
+        )
+    
+    # Check if any process failed
+    return 1 if any(result != 0 for result in results) else 0
+
+
+def process_local_list(args: argparse.Namespace) -> int:
+    """Process a list of local directories in parallel.
+    
+    Args:
+        args: Command line arguments
+    
+    Returns:
+        int: Exit code (0 for success, 1 for failure)
+    """
+    # Read the local directory list file
+    with open(args.local_list, 'r') as f:
+        dir_lines = f.readlines()
+    
+    # Parse directory paths
+    dir_paths = []
+    for line in dir_lines:
+        line = line.strip()
+        if line and not line.startswith('#'):
+            dir_paths.append(line)
+    
+    if not dir_paths:
+        print("No valid directories found in the list")
+        return 1
+    
+    # Create a pool of worker processes
+    with multiprocessing.Pool(processes=args.num_workers) as pool:
+        # Process directories in parallel
+        results = pool.starmap(
+            process_single_repo,
+            [(args, None, dir_path) for dir_path in dir_paths]
+        )
+    
+    # Check if any process failed
+    return 1 if any(result != 0 for result in results) else 0
+
+
+def main():
+    """Main entry point for the application."""
+    # Parse arguments
+    args = parse_arguments()
+    
+    # Process based on the mode
+    if args.repo_list:
+        return process_repo_list(args)
+    elif args.local_list:
+        return process_local_list(args)
+    else:
+        # Single repository/directory mode
+        return process_single_repo(args, args.repo if args.repo else None, args.local if args.local else None)
 
 
 if __name__ == "__main__":
