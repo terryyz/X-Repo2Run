@@ -520,7 +520,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                 # Check if all dependencies were successfully installed
                 if result_data["dependencies"]["installed"] < len(unified_requirements):
                     add_log_entry(f"Failed to install all dependencies. Installed {result_data['dependencies']['installed']} out of {len(unified_requirements)} requirements", level="ERROR")
-                    result_data["status"] = "failure"
+                    result_data["status"] = "error"
                     result_data["error"] = "Not all dependencies could be installed"
                     
                     # Write the result to results.jsonl
@@ -633,7 +633,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             # Check if all dependencies were successfully installed
             if result_data["dependencies"]["installed"] < len(unified_requirements):
                 add_log_entry(f"Failed to install all dependencies. Installed {result_data['dependencies']['installed']} out of {len(unified_requirements)} requirements", level="ERROR")
-                result_data["status"] = "failure"
+                result_data["status"] = "error"
                 result_data["error"] = "Not all dependencies could be installed"
                 
                 # Write the result to results.jsonl
@@ -673,7 +673,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                 return 1  # Return failure status as requested
             except Exception as e:
                 add_log_entry(f"Error collecting tests: {str(e)}", level="ERROR")
-                result_data["status"] = "failure"
+                result_data["status"] = "error"
                 result_data["error"] = str(e)
                 
                 # Write the result to results.jsonl
@@ -700,8 +700,8 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             result_data["tests"]["failed"] = 0
             result_data["tests"]["skipped"] = 0
             
-            add_log_entry("Setting status to success since no tests were found")
-            result_data["status"] = "success"
+            add_log_entry("Setting status to skip since no tests were found")
+            result_data["status"] = "skip"
         else:
             add_log_entry(f"Found {len(test_files)} test files in the project")
             
@@ -719,10 +719,13 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             
             # Fix the status determination
             if test_results.get("status") == "error":
-                add_log_entry("Setting status to failure due to test error")
-                result_data["status"] = "failure"
-            elif test_results["tests_failed"] > 0:
-                add_log_entry(f"Setting status to failure due to failed tests: {test_results['tests_failed']}")
+                add_log_entry("Setting status to error due to test error")
+                result_data["status"] = "error"
+            elif test_results["tests_failed"] > 0 and test_results["tests_passed"] > 0:
+                add_log_entry(f"Setting status to partial_success due to partial test failures: {test_results['tests_failed']}")
+                result_data["status"] = "partial_success"
+            elif test_results["tests_failed"] > 0 and test_results["tests_passed"] == 0:
+                add_log_entry(f"Setting status to failure due to all tests failing: {test_results['tests_failed']}")
                 result_data["status"] = "failure"
             elif result_data["tests"]["found"] > 0 and result_data["tests"]["passed"] == 0:
                 add_log_entry("Setting status to failure because tests were found but none passed")
