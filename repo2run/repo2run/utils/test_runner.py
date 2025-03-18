@@ -240,43 +240,99 @@ class TestRunner:
         """
         self.logger.info("Collecting tests using pytest")
         
-        # Find the best working directory
-        working_dir = self._find_best_working_dir()
+        # Find test files
+        test_files = self.find_tests()
+        if not test_files:
+            self.logger.warning("No test files found during collection")
+            return {
+                "success": True,
+                "tests": []
+            }
         
-        # Make sure pytest is installed
-        if not self.check_pytest():
-            self.logger.info("pytest is not installed. Installing...")
-            if not self.install_pytest():
-                self.logger.error("Failed to install pytest")
-                return {
-                    "success": False,
-                    "error": "Failed to install pytest",
-                    "tests": []
-                }
+        # Get Python path using helper method
+        try:
+            python_path = self._get_python_path()
+        except Exception as e:
+            self.logger.error(f"Error getting Python path: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Error getting Python path: {str(e)}",
+                "tests": []
+            }
+        
+        # Try to get pytest path
+        pytest_path = self._get_pytest_path()
+        
+        # Choose the command based on whether pytest is installed
+        if pytest_path:
+            self.logger.info(f"Using pytest binary at {pytest_path}")
+            cmd = [
+                str(pytest_path),
+                '--collect-only',
+                '-v'
+            ]
+        else:
+            self.logger.info("Using python -m pytest")
+            cmd = [
+                str(python_path),
+                '-m',
+                'pytest',
+                '--collect-only',
+                '-v'
+            ]
+        
+        # Current directory to change back to
+        current_dir = os.getcwd()
         
         try:
+            # Change to the repository directory to run collection with relative paths
+            os.chdir(self.repo_path)
+            
+            # Convert test files to paths relative to repo_path
+            relative_test_files = []
+            for test_file in test_files:
+                try:
+                    relative_path = test_file.relative_to(self.repo_path)
+                    relative_test_files.append(str(relative_path))
+                except ValueError:
+                    # If we can't get a relative path, use the absolute path
+                    self.logger.warning(f"Couldn't get relative path for {test_file}, using absolute path")
+                    relative_test_files.append(str(test_file))
+            
+            # Add relative paths to command
+            cmd.extend(relative_test_files)
+            
             # Run pytest in collect-only mode
-            self.logger.info("Running pytest in collect-only mode")
+            self.logger.info(f"Running collection command from {self.repo_path}: {' '.join(cmd)}")
             
-            # Use --collect-only to just collect the tests
-            command = ["pytest", "--collect-only", "-v"]
+            result = subprocess.run(
+                cmd,
+                check=False,
+                capture_output=True,
+                text=True
+            )
             
-            result = self._run_in_venv(command, cwd=working_dir)
-            output = result.get("stdout", "")
+            output = result.stdout
             
             # Extract test names using regex
             tests = []
-            collection_pattern = re.compile(r"<Function\s+(\w+)\s*>|<TestCaseFunction\s+(\w+)\s*>")
+            collection_pattern = re.compile(r"<(?:Function|TestCaseFunction|Module)\s+([^>]+)>")
             for match in collection_pattern.finditer(output):
-                test_name = match.group(1) or match.group(2)
-                if test_name:
+                test_name = match.group(1)
+                if test_name and test_name not in tests:
                     tests.append(test_name)
             
-            self.logger.info(f"Collected {len(tests)} tests")
+            success = result.returncode == 0
+            self.logger.info(f"Collected {len(tests)} tests, success: {success}")
+            
+            if not success:
+                self.logger.warning(f"Collection failed with return code {result.returncode}: {result.stderr}")
             
             return {
-                "success": True,
-                "tests": tests
+                "success": success,
+                "tests": tests,
+                "output": output,
+                "error": result.stderr if not success else ""
             }
         except Exception as e:
             self.logger.error(f"Error collecting tests: {str(e)}")
@@ -285,6 +341,9 @@ class TestRunner:
                 "error": str(e),
                 "tests": []
             }
+        finally:
+            # Change back to the original directory
+            os.chdir(current_dir)
     
     def _find_best_working_dir(self):
         """
@@ -477,13 +536,29 @@ class TestRunner:
         # Try to get pytest path, but it's okay if it doesn't exist
         pytest_path = self._get_pytest_path()
         
+        # Install pytest if it's not found
+        if not pytest_path:
+            self.logger.info("pytest not found, attempting to install it")
+            if not self.install_pytest():
+                self.logger.error("Failed to install pytest, cannot run tests")
+                return {
+                    "tests_found": len(test_files),
+                    "tests_passed": 0,
+                    "tests_failed": len(test_files),
+                    "tests_skipped": 0,
+                    "test_results": [{"name": str(f.relative_to(self.repo_path)), "status": "error", "message": "Failed to install pytest"} for f in test_files],
+                    "status": "error",
+                    "error": "Failed to install pytest"
+                }
+            # Try again to get pytest path after installation
+            pytest_path = self._get_pytest_path()
+        
         # Choose the command based on whether pytest is installed
         if pytest_path:
             self.logger.info(f"Using pytest binary at {pytest_path}")
             cmd = [
                 str(pytest_path),
-                '-v',
-                '--no-header'
+                '-v'
             ]
         else:
             self.logger.info("Using python -m pytest")
@@ -491,21 +566,35 @@ class TestRunner:
                 str(python_path),
                 '-m',
                 'pytest',
-                '-v',
-                '--no-header'
+                '-v'
             ]
         
-        # Add all test files as arguments
-        for test_file in test_files:
-            cmd.append(str(test_file))
-        
-        # Run the tests
-        self.logger.info(f"Running command: {' '.join(cmd)}")
-        
+        # Add all test files as arguments, converting them to relative paths
+        # This helps avoid pathname issues when running pytest
+        current_dir = os.getcwd()
         try:
+            # Change to the repository directory to run tests with relative paths
+            os.chdir(self.repo_path)
+            
+            # Convert test files to paths relative to repo_path
+            relative_test_files = []
+            for test_file in test_files:
+                try:
+                    relative_path = test_file.relative_to(self.repo_path)
+                    relative_test_files.append(str(relative_path))
+                except ValueError:
+                    # If we can't get a relative path, use the absolute path
+                    self.logger.warning(f"Couldn't get relative path for {test_file}, using absolute path")
+                    relative_test_files.append(str(test_file))
+            
+            # Add relative paths to command
+            cmd.extend(relative_test_files)
+            
+            # Run the tests
+            self.logger.info(f"Running command from {self.repo_path}: {' '.join(cmd)}")
+            
             result = subprocess.run(
                 cmd,
-                cwd=self.repo_path,
                 check=False,
                 capture_output=True,
                 text=True
@@ -527,14 +616,17 @@ class TestRunner:
         except Exception as e:
             self.logger.error(f"Error running tests: {str(e)}")
             return {
-                "tests_found": 0,
+                "tests_found": len(test_files),
                 "tests_passed": 0,
-                "tests_failed": 0,
+                "tests_failed": len(test_files),
                 "tests_skipped": 0,
-                "test_results": [],
+                "test_results": [{"name": str(f.relative_to(self.repo_path)), "status": "error", "message": str(e)} for f in test_files],
                 "status": "error",
                 "error": str(e)
             }
+        finally:
+            # Change back to the original directory
+            os.chdir(current_dir)
     
     def _parse_test_results(self, stdout, stderr):
         """
@@ -564,86 +656,96 @@ class TestRunner:
                 tests_found = tests_passed + tests_skipped + tests_failed
                 break
         
+        # Also try an alternative pattern (pytest can have different output formats)
+        if tests_found == 0:
+            alt_pattern = re.compile(r"=+\s+(\d+)\s+passed,?\s*(\d+)\s+skipped,?\s*(\d+)\s+failed")
+            for line in stdout.splitlines():
+                match = alt_pattern.search(line)
+                if match:
+                    tests_passed = int(match.group(1))
+                    tests_skipped = int(match.group(2))
+                    tests_failed = int(match.group(3))
+                    tests_found = tests_passed + tests_skipped + tests_failed
+                    break
+        
         # If we couldn't parse the summary, try to count the tests
         if tests_found == 0:
-            # Collect tests to get count
-            collected = self.collect_tests()
-            if collected["success"]:
-                tests_found = len(collected["tests"])
-            else:
-                # If test collection failed, use number of test files instead
+            # Try to parse collection statistics if present
+            collection_pattern = re.compile(r"collected\s+(\d+)\s+items")
+            for line in stdout.splitlines():
+                match = collection_pattern.search(line)
+                if match:
+                    tests_found = int(match.group(1))
+                    break
+            
+            # If still no count, use test files
+            if tests_found == 0:
                 test_files = self.find_tests()
                 tests_found = len(test_files)
-            
-            if stderr and "error" in stderr.lower():
+                
+            # Check for various failure conditions
+            if stderr and ("error" in stderr.lower() or "exception" in stderr.lower()):
                 # All tests failed if there was an error
                 tests_failed = tests_found
-            elif "no tests ran" in stdout.lower():
+            elif stdout and "no tests ran" in stdout.lower():
                 # No tests ran
                 tests_skipped = tests_found
+            elif "FAILURES" in stdout:
+                # Some tests failed
+                # Count failed tests by counting the "FAILED" lines
+                for line in stdout.splitlines():
+                    if "FAILED" in line or "ERROR" in line:
+                        tests_failed += 1
+            
+            # If no explicit values for passed/skipped, infer them
+            if tests_passed == 0 and tests_skipped == 0 and tests_failed == 0:
+                # Default assumption: all tests passed if no failures detected
+                tests_passed = tests_found
+            elif tests_passed == 0:
+                # Calculate passed tests by subtraction
+                tests_passed = tests_found - tests_failed - tests_skipped
             
         # Parse individual test results
         test_results = []
-        failure_pattern = re.compile(r"(FAILED|ERROR)\s+(.+?)::(.+?)\s+-")
-        failure_messages = {}
-        
-        # Extract failure messages
-        current_test = None
-        capturing_message = False
-        message_lines = []
-        
-        for line in stdout.splitlines():
-            # Check if this line starts a new failure
-            failure_match = failure_pattern.search(line)
-            if failure_match:
-                # If we were capturing a message, save it
-                if current_test and capturing_message:
-                    failure_messages[current_test] = "\n".join(message_lines)
-                    message_lines = []
-                
-                current_test = f"{failure_match.group(2)}::{failure_match.group(3)}"
-                capturing_message = True
-                continue
-            
-            # Check if this line is part of a failure message
-            if capturing_message:
-                if line.strip() and not line.startswith("=") and not line.startswith("_"):
-                    message_lines.append(line.strip())
-                elif line.startswith("=") and "short test summary info" in line.lower():
-                    # End of failure message
-                    failure_messages[current_test] = "\n".join(message_lines)
-                    capturing_message = False
-        
-        # Save the last failure message if we were capturing one
-        if current_test and capturing_message:
-            failure_messages[current_test] = "\n".join(message_lines)
         
         # Get test files to create results for
         test_files = self.find_tests()
         
-        # Create test results
+        # Try to match test failures with test files
+        test_file_dict = {}
         for test_file in test_files:
-            test_name = test_file.relative_to(self.repo_path)
-            
-            # Check if this test file had failures
-            test_failed = False
-            failure_message = ""
-            
-            for key, message in failure_messages.items():
-                if str(test_name) in key:
-                    test_failed = True
-                    failure_message = message
+            test_name = str(test_file.relative_to(self.repo_path))
+            test_file_dict[test_name] = {
+                "file": test_file,
+                "failed": False,
+                "message": ""
+            }
+        
+        # Extract failures and match them to test files
+        for line in stdout.splitlines():
+            for test_name in test_file_dict:
+                if test_name in line and ("FAILED" in line or "ERROR" in line):
+                    test_file_dict[test_name]["failed"] = True
+                    # Extract failure message (next few lines)
+                    message_start = stdout.find(line) + len(line)
+                    next_failure = stdout.find("FAILED", message_start)
+                    if next_failure == -1:
+                        next_failure = len(stdout)
+                    message = stdout[message_start:next_failure].strip()
+                    test_file_dict[test_name]["message"] = message
                     break
-            
-            if test_failed:
+        
+        # Create test results using the dictionary
+        for test_name, info in test_file_dict.items():
+            if info["failed"]:
                 test_results.append({
-                    "name": str(test_name),
+                    "name": test_name,
                     "status": "failure",
-                    "message": failure_message
+                    "message": info["message"]
                 })
             else:
                 test_results.append({
-                    "name": str(test_name),
+                    "name": test_name,
                     "status": "success",
                     "message": ""
                 })

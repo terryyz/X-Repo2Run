@@ -151,7 +151,8 @@ def main():
             "start_time": start_time,
             "elapsed_time": 0
         },
-        "logs": []
+        "logs": [],
+        "log_messages": []  # Simple list of log messages without timestamp and level
     }
     
     # Function to add log entries to the result data
@@ -164,6 +165,7 @@ def main():
             **kwargs
         }
         result_data["logs"].append(log_entry)
+        result_data["log_messages"].append(message)  # Add just the message to log_messages list
         
         # Also log to regular logger with simplified format
         if level == "INFO":
