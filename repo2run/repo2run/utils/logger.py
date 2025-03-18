@@ -11,13 +11,13 @@ def configure_process_logging(verbose: bool) -> logging.Logger:
     """Configure logging for a worker process.
     
     Args:
-        verbose (bool): Whether to enable verbose logging
+        verbose (bool): Whether to enable verbose logging. When disabled, no logs will be shown.
         
     Returns:
         logging.Logger: Configured logger instance
     """
     logger = logging.getLogger('repo2run')
-    logger.setLevel(logging.INFO if verbose else logging.WARNING)
+    logger.setLevel(logging.INFO if verbose else logging.CRITICAL)  # Only show logs in verbose mode
     
     # Remove any existing handlers
     for handler in logger.handlers[:]:
@@ -25,7 +25,7 @@ def configure_process_logging(verbose: bool) -> logging.Logger:
     
     # Add a new handler that only shows logs if verbose is True
     handler = logging.StreamHandler()
-    handler.setLevel(logging.INFO if verbose else logging.WARNING)
+    handler.setLevel(logging.INFO if verbose else logging.CRITICAL)  # Only show logs in verbose mode
     formatter = logging.Formatter('%(message)s')
     handler.setFormatter(formatter)
     logger.addHandler(handler)
@@ -46,7 +46,7 @@ def setup_logger(log_file=None, verbose=False):
     """
     # Create logger
     logger = logging.getLogger("repo2run")
-    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
+    logger.setLevel(logging.DEBUG if verbose else logging.CRITICAL)  # Only show logs in verbose mode
     
     # Create formatter
     formatter = logging.Formatter(
@@ -55,7 +55,7 @@ def setup_logger(log_file=None, verbose=False):
     
     # Create console handler
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.DEBUG if verbose else logging.INFO)
+    console_handler.setLevel(logging.DEBUG if verbose else logging.CRITICAL)  # Only show logs in verbose mode
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
     
@@ -65,7 +65,7 @@ def setup_logger(log_file=None, verbose=False):
         log_path.parent.mkdir(parents=True, exist_ok=True)
         
         file_handler = logging.FileHandler(log_path)
-        file_handler.setLevel(logging.DEBUG)
+        file_handler.setLevel(logging.DEBUG)  # Always log everything to file
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
     
