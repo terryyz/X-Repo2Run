@@ -665,6 +665,14 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         
         add_log_entry(f"Results written to {results_jsonl_path}")
         
+        # Clean up the project directory
+        try:
+            add_log_entry(f"Cleaning up project directory: {project_dir}")
+            shutil.rmtree(project_dir, ignore_errors=True)
+            add_log_entry("Project directory cleaned up successfully")
+        except Exception as e:
+            add_log_entry(f"Failed to clean up project directory: {str(e)}", level="WARNING")
+        
         return 0
     
     except Exception as e:
