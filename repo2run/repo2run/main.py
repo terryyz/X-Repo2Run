@@ -395,6 +395,9 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             shutil.copy(original_pyproject_path, pyproject_path)
             add_log_entry(f"Copied existing pyproject.toml to {pyproject_path}")
         
+        # Initialize installation_results with a default empty list
+        installation_results = []
+        
         # Initialize project
         if args.use_uv:
             add_log_entry("Initializing project with uv")
@@ -608,6 +611,30 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                 with open(results_jsonl_path, "a") as f:
                     f.write(json.dumps(result_data) + "\n")
                 raise RuntimeError(f"Failed to initialize project with venv: {str(e)}")
+            
+            # Install dependencies
+            dependency_installer = DependencyInstaller(project_dir, use_uv=args.use_uv, logger=logger)
+            add_log_entry(f"Installing {len(unified_requirements)} requirements using {'UV' if args.use_uv else 'pip'}")
+            add_log_entry(f"Virtual environment path: {venv_path}, exists: {venv_path.exists()}")
+            
+            # Now install requirements
+            installation_results = dependency_installer.install_requirements(unified_requirements, venv_path)
+            
+            # Store installation results in the result data
+            result_data["installation_results"] = installation_results
+            result_data["dependencies"]["installed"] = sum(1 for r in installation_results if r["success"])
+            
+            # Check if all dependencies were successfully installed
+            if result_data["dependencies"]["installed"] < len(unified_requirements):
+                add_log_entry(f"Failed to install all dependencies. Installed {result_data['dependencies']['installed']} out of {len(unified_requirements)} requirements", level="ERROR")
+                result_data["status"] = "failure"
+                result_data["error"] = "Not all dependencies could be installed"
+                
+                # Write the result to results.jsonl
+                with open(results_jsonl_path, "a") as f:
+                    f.write(json.dumps(result_data) + "\n")
+                
+                return 1
         
         # If collect-only mode is enabled, only collect tests without running them
         if args.collect_only:
