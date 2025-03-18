@@ -19,23 +19,28 @@ class RepoManager:
     
     def __init__(self, workspace_dir=None, logger=None):
         """
-        Initialize the repository manager.
+        Initialize RepoManager with a workspace directory.
         
         Args:
-            workspace_dir (str, optional): Directory to use as workspace. If None, a temporary directory is created.
-            logger (logging.Logger, optional): Logger instance. If None, a new logger is created.
+            workspace_dir (Path or str, optional): Directory to use for repository operations.
+                If None, uses the current working directory.
+            logger (logging.Logger, optional): Logger for recording operations.
         """
-        self.logger = logger or logging.getLogger(__name__)
+        self.logger = logger
         
+        # Use the provided workspace directory, or default to current working directory
         if workspace_dir:
-            self.workspace_dir = Path(workspace_dir)
-            self.workspace_dir.mkdir(parents=True, exist_ok=True)
-            self.temp_dir = None
+            self.workspace_dir = Path(workspace_dir).resolve()
         else:
-            self.temp_dir = tempfile.TemporaryDirectory()
-            self.workspace_dir = Path(self.temp_dir.name)
+            self.workspace_dir = Path.cwd()
         
-        self.logger.debug(f"Workspace directory: {self.workspace_dir}")
+        # Ensure the workspace directory exists
+        self.workspace_dir.mkdir(parents=True, exist_ok=True)
+        
+        if self.logger:
+            self.logger.info(f"Using workspace directory: {self.workspace_dir}")
+        
+        self.temp_dir = None
     
     def __del__(self):
         """Clean up temporary directory if it exists."""

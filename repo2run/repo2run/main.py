@@ -156,6 +156,9 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
+    # Ensure absolute path for output directory
+    output_dir = output_dir.resolve()
+    
     # Initialize results.jsonl file
     results_jsonl_path = output_dir / "results.jsonl"
     
@@ -230,9 +233,6 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             repo_name = repo_path.name
             add_log_entry(f"Cloned repository {full_name} at {sha}", repo_name=repo_name)
             result_data["repository_name"] = repo_name
-            # Store the temp directory for cleanup
-            if args.workspace_dir is None:
-                temp_dir = repo_path.parent
         else:
             local_path = Path(local_path).resolve()
             repo_path = repo_manager.setup_local_repository(local_path)
@@ -241,7 +241,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             result_data["repository_name"] = repo_name
         
         # Create a project directory in the output folder
-        project_dir = output_dir / repo_name
+        project_dir = output_dir / repo_identifier
         
         # Check if project directory already exists
         if project_dir.exists():
@@ -665,14 +665,6 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         
         add_log_entry(f"Results written to {results_jsonl_path}")
         
-        # Clean up the project directory
-        try:
-            add_log_entry(f"Cleaning up project directory: {project_dir}")
-            shutil.rmtree(project_dir, ignore_errors=True)
-            add_log_entry("Project directory cleaned up successfully")
-        except Exception as e:
-            add_log_entry(f"Failed to clean up project directory: {str(e)}", level="WARNING")
-        
         return 0
     
     except Exception as e:
@@ -688,15 +680,6 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             f.write(json.dumps(result_data) + "\n")
         
         return 1
-    
-    finally:
-        # Clean up temporary directory if it was created
-        if temp_dir and args.workspace_dir is None:
-            try:
-                add_log_entry(f"Cleaning up temporary directory: {temp_dir}")
-                shutil.rmtree(temp_dir, ignore_errors=True)
-            except Exception as e:
-                add_log_entry(f"Failed to clean up temporary directory: {str(e)}", level="WARNING")
 
 
 def process_repo_list(args: argparse.Namespace) -> int:
