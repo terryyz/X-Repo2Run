@@ -7,6 +7,32 @@ import sys
 from pathlib import Path
 
 
+def configure_process_logging(verbose: bool) -> logging.Logger:
+    """Configure logging for a worker process.
+    
+    Args:
+        verbose (bool): Whether to enable verbose logging
+        
+    Returns:
+        logging.Logger: Configured logger instance
+    """
+    logger = logging.getLogger('repo2run')
+    logger.setLevel(logging.INFO if verbose else logging.WARNING)
+    
+    # Remove any existing handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # Add a new handler that only shows logs if verbose is True
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.INFO if verbose else logging.WARNING)
+    formatter = logging.Formatter('%(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    
+    return logger
+
+
 def setup_logger(log_file=None, verbose=False):
     """
     Set up and configure the logger.

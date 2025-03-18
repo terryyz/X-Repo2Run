@@ -51,28 +51,7 @@ from repo2run.utils.repo_manager import RepoManager
 from repo2run.utils.dependency_extractor import DependencyExtractor
 from repo2run.utils.dependency_installer import DependencyInstaller
 from repo2run.utils.test_runner import TestRunner
-from repo2run.utils.logger import setup_logger
-
-
-def _configure_process_logging(verbose: bool):
-    """Configure logging for a worker process.
-    
-    Args:
-        verbose (bool): Whether to enable verbose logging
-    """
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO if verbose else logging.WARNING)
-    
-    # Remove any existing handlers
-    for handler in logger.handlers[:]:
-        logger.removeHandler(handler)
-    
-    # Add a new handler that only shows logs if verbose is True
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.INFO if verbose else logging.WARNING)
-    formatter = logging.Formatter('%(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+from repo2run.utils.logger import configure_process_logging
 
 
 def parse_arguments():
@@ -172,11 +151,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
     temp_dir = None
     
     # Configure logging for this process
-    _configure_process_logging(args.verbose)
-    
-    # Setup logging
-    logger = setup_logger(verbose=args.verbose)
-    logger.info("Starting Repo2Run")
+    logger = configure_process_logging(args.verbose)
     
     # Create output directory
     output_dir = Path(args.output_dir)
@@ -217,11 +192,8 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         "logs": []
     }
     
-    # Original log entries (with timestamp and level)
-    full_logs = []
-    
-    # Function to add log entries to the result data
-    def add_log_entry(message, level="INFO", **kwargs):
+    def add_log_entry(message: str, level: str = "INFO", **kwargs):
+        """Add a log entry to both the logger and result data."""
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = {
             "timestamp": timestamp,
@@ -229,19 +201,14 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             "message": message,
             **kwargs
         }
-        full_logs.append(log_entry)  # Store the full log object
-        result_data["logs"].append(message)  # Only store the message string
+        result_data["logs"].append(log_entry)
         
-        # Also log to regular logger with simplified format
         if level == "INFO":
             logger.info(message)
         elif level == "WARNING":
             logger.warning(message)
         elif level == "ERROR":
             logger.error(message)
-    
-    add_log_entry("Starting Repo2Run")
-    add_log_entry(f"Using {'UV' if args.use_uv else 'pip/venv'} for dependency management")
     
     try:
         # Initialize repository
@@ -920,7 +887,7 @@ def _process_repo_wrapper(args_and_repo):
         int: Exit code from process_single_repo
     """
     args, repo_info = args_and_repo
-    _configure_process_logging(args.verbose)
+    logger = configure_process_logging(args.verbose)
     return process_single_repo(args, repo_info, None)
 
 
@@ -934,7 +901,7 @@ def _process_local_wrapper(args_and_path):
         int: Exit code from process_single_repo
     """
     args, local_path = args_and_path
-    _configure_process_logging(args.verbose)
+    logger = configure_process_logging(args.verbose)
     return process_single_repo(args, None, local_path)
 
 
@@ -948,7 +915,7 @@ def process_repo_list(args: argparse.Namespace) -> int:
         int: Exit code (0 for success, 1 for failure)
     """
     # Configure logging for the main process
-    _configure_process_logging(args.verbose)
+    logger = configure_process_logging(args.verbose)
     
     # Read the repository list file
     with open(args.repo_list, 'r') as f:
@@ -963,11 +930,11 @@ def process_repo_list(args: argparse.Namespace) -> int:
                 full_name, sha = line.split()
                 repo_infos.append((full_name, sha))
             except ValueError:
-                print(f"Invalid line in repository list: {line}")
+                logger.error(f"Invalid line in repository list: {line}")
                 return 1
     
     if not repo_infos:
-        print("No valid repositories found in the list")
+        logger.error("No valid repositories found in the list")
         return 1
     
     # Create argument tuples for the wrapper function
@@ -998,7 +965,7 @@ def process_local_list(args: argparse.Namespace) -> int:
         int: Exit code (0 for success, 1 for failure)
     """
     # Configure logging for the main process
-    _configure_process_logging(args.verbose)
+    logger = configure_process_logging(args.verbose)
     
     # Read the local directory list file
     with open(args.local_list, 'r') as f:
@@ -1012,7 +979,7 @@ def process_local_list(args: argparse.Namespace) -> int:
             dir_paths.append(line)
     
     if not dir_paths:
-        print("No valid directories found in the list")
+        logger.error("No valid directories found in the list")
         return 1
     
     # Create argument tuples for the wrapper function
@@ -1038,6 +1005,9 @@ def main():
     # Parse arguments
     args = parse_arguments()
     
+    # Configure logging for the main process
+    logger = configure_process_logging(args.verbose)
+    
     # Process based on the mode
     if args.repo_list:
         return process_repo_list(args)
@@ -1061,7 +1031,8 @@ if __name__ == "__main__":
             'docker rmi $(docker images --filter "dangling=true" -q) > /dev/null 2>&1',
             shell=True, check=False
         )
-    except Exception:
-        print("Failed to clean up dangling Docker images")
+    except Exception as e:
+        logger = configure_process_logging(True)  # Use verbose for error logging
+        logger.error("Failed to clean up dangling Docker images: %s", str(e))
     
     sys.exit(main()) 
