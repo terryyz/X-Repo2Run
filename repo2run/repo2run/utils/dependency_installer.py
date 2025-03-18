@@ -290,6 +290,9 @@ class DependencyInstaller:
         else:
             pip_path = venv_path / 'bin' / 'pip'
         
+        # Convert to absolute path to ensure it works regardless of the working directory
+        pip_path = pip_path.absolute()
+        
         if not pip_path.exists():
             self.logger.error(f"pip not found in virtual environment at {pip_path}")
             raise RuntimeError(f"pip not found in virtual environment at {pip_path}")
@@ -300,10 +303,13 @@ class DependencyInstaller:
         try:
             self.logger.info("Creating requirements.txt and installing all requirements at once")
             
-            # Create a temporary requirements.txt file
+            # Create a temporary requirements.txt file - use absolute path
             requirements_path = self.repo_path / "requirements.txt.tmp"
             with open(requirements_path, 'w') as f:
                 f.write('\n'.join(requirements))
+            
+            # Ensure requirements_path is absolute
+            requirements_path = requirements_path.absolute()
             
             # Install all requirements at once
             cmd = [
@@ -314,9 +320,10 @@ class DependencyInstaller:
                 '--no-cache-dir'
             ]
             
+            self.logger.info(f"Running pip with command: {' '.join(cmd)}")
+            
             result = subprocess.run(
                 cmd,
-                cwd=self.repo_path,
                 check=True,
                 capture_output=True,
                 text=True
@@ -355,9 +362,10 @@ class DependencyInstaller:
                         '--no-cache-dir'
                     ]
                     
+                    self.logger.info(f"Running pip with command: {' '.join(cmd)}")
+                    
                     result = subprocess.run(
                         cmd,
-                        cwd=self.repo_path,
                         check=True,
                         capture_output=True,
                         text=True
@@ -392,9 +400,10 @@ class DependencyInstaller:
                 '--no-cache-dir'
             ]
             
+            self.logger.info(f"Running pip with command: {' '.join(cmd)}")
+            
             subprocess.run(
                 cmd,
-                cwd=self.repo_path,
                 check=True,
                 capture_output=True,
                 text=True
