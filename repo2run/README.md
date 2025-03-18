@@ -178,6 +178,63 @@ For each repository processed, Repo2Run generates the following output files:
 - `{repo_name}_test_results.json`: Results of running tests
 - `{repo_name}_summary.json`: Summary of the entire process
 
+### Results Format (results.jsonl)
+
+The main output is stored in `results.jsonl`, where each line is a JSON object containing the complete results for a repository. The format is:
+
+```json
+{
+    "repository": "username/repo@sha or /path/to/local/repo",
+    "repository_identifier": "username_repo_sha7 or repo_name",
+    "status": "success|failure|error|skip|partial_success",
+    "configuration": {
+        "output_directory": "/path/to/output",
+        "overwrite_mode": false,
+        "timeout": 7200,
+        "use_uv": false
+    },
+    "dependencies": {
+        "found": 10,
+        "installed": 8,
+        "details": ["package1==1.0.0", "package2>=2.0.0"],
+        "compiled_requirements": ["package1==1.0.0", "package2==2.1.0"]
+    },
+    "tests": {
+        "found": 50,
+        "passed": 45,
+        "failed": 3,
+        "skipped": 2,
+        "details": [
+            {
+                "name": "test_function",
+                "file": "tests/test_file.py",
+                "status": "passed|failed|skipped",
+                "message": "Error message if failed"
+            }
+        ]
+    },
+    "execution": {
+        "start_time": 1234567890.123,
+        "elapsed_time": 120.5
+    },
+    "logs": [
+        {
+            "timestamp": "2024-02-20 10:30:45",
+            "level": "INFO|WARNING|ERROR",
+            "message": "Log message"
+        }
+    ],
+    "error": "Error message if status is error"
+}
+```
+
+Status values:
+- `success`: All tests passed
+- `partial_success`: Some tests passed, some failed
+- `failure`: All tests failed
+- `error`: An error occurred during processing
+- `skip`: No tests were found or all tests were skipped
+
 ## Supported Dependency Sources
 
 - requirements.txt
