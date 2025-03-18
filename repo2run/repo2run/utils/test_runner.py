@@ -676,8 +676,8 @@ class TestRunner:
                 status = "skipped"
                 self.logger.warning("Setting status to 'skipped' because no actual test functions were found")
             elif tests_failed > 0:
-                status = "error"
-                
+                status = "failure"
+            
             return {
                 "tests_found": tests_found,
                 "tests_passed": tests_passed,
@@ -722,6 +722,9 @@ class TestRunner:
         # Flag to track if all tests were skipped
         all_tests_skipped = False
         
+        # Flag to track if we've successfully parsed the summary
+        summary_parsed = False
+        
         # Try to parse the test summary using regex
         summary_pattern = re.compile(r"=+\s*(\d+)\s+passed[,\s]+(\d+)\s+skipped[,\s]+(\d+)\s+failed")
         for line in stdout.splitlines():
@@ -731,10 +734,11 @@ class TestRunner:
                 tests_skipped = int(summary_match.group(2))
                 tests_failed = int(summary_match.group(3))
                 tests_found = tests_passed + tests_skipped + tests_failed
+                summary_parsed = True
                 break
         
         # Also try an alternative pattern (pytest can have different output formats)
-        if tests_found == 0:
+        if not summary_parsed:
             alt_pattern = re.compile(r"=+\s+(\d+)\s+passed,?\s*(\d+)\s+skipped,?\s*(\d+)\s+failed")
             for line in stdout.splitlines():
                 match = alt_pattern.search(line)
@@ -743,7 +747,19 @@ class TestRunner:
                     tests_skipped = int(match.group(2))
                     tests_failed = int(match.group(3))
                     tests_found = tests_passed + tests_skipped + tests_failed
+                    summary_parsed = True
                     break
+                
+            # Try a pattern for just failures (common in the output)
+            if not summary_parsed:
+                failure_pattern = re.compile(r"=+\s+(\d+)\s+failed")
+                for line in stdout.splitlines():
+                    match = failure_pattern.search(line)
+                    if match:
+                        tests_failed = int(match.group(1))
+                        tests_found = tests_failed  # Initially set to failed count
+                        summary_parsed = True
+                        break
         
         # If we couldn't parse the summary, try to count the tests
         if tests_found == 0:
@@ -769,12 +785,17 @@ class TestRunner:
                 tests_skipped = tests_found
                 all_tests_skipped = True
                 self.logger.warning("No tests ran - all tests will be marked as skipped")
-            elif "FAILURES" in stdout:
-                # Some tests failed
+            elif "FAILURES" in stdout and not summary_parsed:
+                # Some tests failed but we couldn't parse summary
                 # Count failed tests by counting the "FAILED" lines
+                failed_count = 0
                 for line in stdout.splitlines():
                     if "FAILED" in line or "ERROR" in line:
-                        tests_failed += 1
+                        failed_count += 1
+                
+                # Only use this count if we didn't get a count from summary parsing
+                if tests_failed == 0:
+                    tests_failed = failed_count
             
             # If no explicit values for passed/skipped, infer them
             if tests_passed == 0 and tests_skipped == 0 and tests_failed == 0:
@@ -801,7 +822,8 @@ class TestRunner:
                 "message": ""
             }
         
-        # Extract failures and match them to test files
+        # Extract failures and match them to test files - only do detailed matching if we need to
+        # Build per-file results without affecting the overall counts that we already parsed
         for line in stdout.splitlines():
             for test_name in test_file_dict:
                 if test_name in line and ("FAILED" in line or "ERROR" in line):
@@ -835,5 +857,7 @@ class TestRunner:
                     "status": "success",
                     "message": ""
                 })
+        
+        self.logger.info(f"Parsed test results: found={tests_found}, passed={tests_passed}, failed={tests_failed}, skipped={tests_skipped}")
         
         return tests_found, tests_passed, tests_failed, tests_skipped, test_results 

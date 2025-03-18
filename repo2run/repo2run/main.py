@@ -717,71 +717,77 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             result_data["tests"]["skipped"] = test_results["tests_skipped"]
             result_data["tests"]["details"] = test_results["test_results"]
             
+            # Detect and fix anomalous test counts
+            if result_data["tests"]["failed"] > result_data["tests"]["found"]:
+                add_log_entry(f"WARNING: Detected anomalous test counts: found={result_data['tests']['found']}, failed={result_data['tests']['failed']}. Adjusting found count to match.", level="WARNING")
+                result_data["tests"]["found"] = result_data["tests"]["failed"]
+            
+            # Ensure all counts are non-negative
+            result_data["tests"]["passed"] = max(0, result_data["tests"]["passed"])
+            result_data["tests"]["failed"] = max(0, result_data["tests"]["failed"])
+            result_data["tests"]["skipped"] = max(0, result_data["tests"]["skipped"])
+            
             add_log_entry(f"Test results: found={test_results['tests_found']}, passed={test_results['tests_passed']}, failed={test_results['tests_failed']}, skipped={test_results['tests_skipped']}")
             
             # Fix the status determination
+            status_explicitly_set = False
             if test_results.get("status") == "error":
-                add_log_entry("Setting status to error due to test error")
+                add_log_entry("Setting status to error due to test execution error")
                 result_data["status"] = "error"
+                status_explicitly_set = True
+            elif test_results.get("status") == "failure":
+                add_log_entry("Setting status to failure due to failed tests")
+                result_data["status"] = "failure"
+                status_explicitly_set = True
             elif test_results.get("status") == "skipped":
                 add_log_entry("Setting status to skip because tests were found but they don't contain actual pytest test functions")
                 result_data["status"] = "skip"
+                status_explicitly_set = True
                 
                 # If there's additional information about the collection, log it
                 if "warning" in test_results:
                     add_log_entry(test_results["warning"], level="WARNING")
                 if "collect_stdout" in test_results:
                     add_log_entry(f"Test collection output: {test_results['collect_stdout'][:500]}", level="DEBUG")
-            elif test_results["tests_failed"] > 0:
-                # Validate test counts for consistency
-                if test_results["tests_passed"] < 0:
-                    add_log_entry(f"Invalid test counts detected: found={test_results['tests_found']}, passed={test_results['tests_passed']}, failed={test_results['tests_failed']}", level="WARNING")
-                    # Fix negative passed tests
-                    result_data["tests"]["passed"] = max(0, result_data["tests"]["passed"])
-                    add_log_entry(f"Corrected passed tests count to: {result_data['tests']['passed']}")
-                
-                # Set appropriate status based on test results
-                if test_results["tests_passed"] > 0:
-                    add_log_entry(f"Setting status to partial_success due to partial test failures: {test_results['tests_failed']}")
-                    result_data["status"] = "partial_success"
-                else:
-                    add_log_entry(f"Setting status to failure due to all tests failing: {test_results['tests_failed']}")
-                    result_data["status"] = "failure"
-            elif test_results["tests_skipped"] > 0 and test_results["tests_skipped"] == test_results["tests_found"]:
-                # All tests were skipped
-                add_log_entry(f"All {test_results['tests_skipped']} tests were skipped")
-                
-                # If we have test_output, check for "collected 0 items"
-                if "test_output" in test_results and "stdout" in test_results["test_output"]:
-                    if "collected 0 items" in test_results["test_output"]["stdout"]:
-                        add_log_entry("No actual test functions were found in the test files", level="WARNING")
-                        result_data["status"] = "skip"
-                        return 0  # Exit early with success code but "skip" status
-                
-                # Check if test details confirm the skipped status
-                all_skipped_in_details = all(result.get("status") == "skipped" for result in test_results.get("test_results", []))
-                
-                if all_skipped_in_details:
-                    add_log_entry("Setting status to failure because all tests were skipped")
-                    result_data["status"] = "failure"
-                else:
-                    add_log_entry("Setting status to skip since tests were skipped but may exist")
-                    result_data["status"] = "skip"
-            elif result_data["tests"]["found"] > 0 and result_data["tests"]["passed"] <= 0:
-                # Check if we have test_output and it indicates no tests were actually run
-                if "test_output" in test_results and "stdout" in test_results["test_output"]:
-                    if "collected 0 items" in test_results["test_output"]["stdout"]:
-                        add_log_entry("No actual test functions were found in the test files", level="WARNING")
-                        result_data["status"] = "skip"
-                        return 0  # Exit early with success code but "skip" status
-                
-                add_log_entry("Setting status to failure because tests were found but none passed")
-                result_data["status"] = "failure"
-            else:
-                # Validate total test counts
-                if result_data["tests"]["found"] > 0 and (result_data["tests"]["passed"] + result_data["tests"]["failed"] + result_data["tests"]["skipped"]) != result_data["tests"]["found"]:
-                    add_log_entry(f"Inconsistent test counts detected: found={result_data['tests']['found']}, passed={result_data['tests']['passed']}, failed={result_data['tests']['failed']}, skipped={result_data['tests']['skipped']}", level="WARNING")
+            
+            # Only continue with status determination if it wasn't explicitly set by the test runner
+            if not status_explicitly_set:
+                if test_results["tests_failed"] > 0:
+                    # Validate test counts for consistency
+                    if test_results["tests_passed"] < 0:
+                        add_log_entry(f"Invalid test counts detected: found={test_results['tests_found']}, passed={test_results['tests_passed']}, failed={test_results['tests_failed']}", level="WARNING")
+                        # Fix negative passed tests
+                        result_data["tests"]["passed"] = max(0, result_data["tests"]["passed"])
+                        add_log_entry(f"Corrected passed tests count to: {result_data['tests']['passed']}")
                     
+                    # Set appropriate status based on test results
+                    if test_results["tests_passed"] > 0:
+                        add_log_entry(f"Setting status to partial_success due to partial test failures: {test_results['tests_failed']}")
+                        result_data["status"] = "partial_success"
+                    else:
+                        add_log_entry(f"Setting status to failure due to all tests failing: {test_results['tests_failed']}")
+                        result_data["status"] = "failure"
+                elif test_results["tests_skipped"] > 0 and test_results["tests_skipped"] == test_results["tests_found"]:
+                    # All tests were skipped
+                    add_log_entry(f"All {test_results['tests_skipped']} tests were skipped")
+                    
+                    # If we have test_output, check for "collected 0 items"
+                    if "test_output" in test_results and "stdout" in test_results["test_output"]:
+                        if "collected 0 items" in test_results["test_output"]["stdout"]:
+                            add_log_entry("No actual test functions were found in the test files", level="WARNING")
+                            result_data["status"] = "skip"
+                            return 0  # Exit early with success code but "skip" status
+                    
+                    # Check if test details confirm the skipped status
+                    all_skipped_in_details = all(result.get("status") == "skipped" for result in test_results.get("test_results", []))
+                    
+                    if all_skipped_in_details:
+                        add_log_entry("Setting status to failure because all tests were skipped")
+                        result_data["status"] = "failure"
+                    else:
+                        add_log_entry("Setting status to skip since tests were skipped but may exist")
+                        result_data["status"] = "skip"
+                elif result_data["tests"]["found"] > 0 and result_data["tests"]["passed"] <= 0:
                     # Check if we have test_output and it indicates no tests were actually run
                     if "test_output" in test_results and "stdout" in test_results["test_output"]:
                         if "collected 0 items" in test_results["test_output"]["stdout"]:
@@ -789,24 +795,36 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                             result_data["status"] = "skip"
                             return 0  # Exit early with success code but "skip" status
                     
-                    if result_data["tests"]["failed"] > 0:
-                        add_log_entry("Setting status to partial_success due to some failed tests in inconsistent results")
-                        result_data["status"] = "partial_success"
-                    else:
-                        add_log_entry("Setting status to success despite inconsistent test counts")
-                        result_data["status"] = "success"
+                    add_log_entry("Setting status to failure because tests were found but none passed")
+                    result_data["status"] = "failure"
                 else:
-                    # Final check for "collected 0 items"
-                    if "test_output" in test_results and "stdout" in test_results["test_output"]:
-                        if "collected 0 items" in test_results["test_output"]["stdout"]:
-                            add_log_entry("Files look like tests but contain no testable functions - setting status to skip", level="WARNING")
-                            result_data["status"] = "skip"
+                    # Validate total test counts
+                    if result_data["tests"]["found"] > 0 and (result_data["tests"]["passed"] + result_data["tests"]["failed"] + result_data["tests"]["skipped"]) != result_data["tests"]["found"]:
+                        add_log_entry(f"Inconsistent test counts detected: found={result_data['tests']['found']}, passed={result_data['tests']['passed']}, failed={result_data['tests']['failed']}, skipped={result_data['tests']['skipped']}", level="WARNING")
+                        
+                        # Check if we have test_output and it indicates no tests were actually run
+                        if "test_output" in test_results and "stdout" in test_results["test_output"]:
+                            if "collected 0 items" in test_results["test_output"]["stdout"]:
+                                add_log_entry("No actual test functions were found in the test files", level="WARNING")
+                                result_data["status"] = "skip"
+                            else:
+                                add_log_entry("Setting status to success despite inconsistent test counts")
+                                result_data["status"] = "success"
                         else:
                             add_log_entry("Setting status to success")
                             result_data["status"] = "success"
                     else:
-                        add_log_entry("Setting status to success")
-                        result_data["status"] = "success"
+                        # Final check for "collected 0 items"
+                        if "test_output" in test_results and "stdout" in test_results["test_output"]:
+                            if "collected 0 items" in test_results["test_output"]["stdout"]:
+                                add_log_entry("Files look like tests but contain no testable functions - setting status to skip", level="WARNING")
+                                result_data["status"] = "skip"
+                            else:
+                                add_log_entry("Setting status to success")
+                                result_data["status"] = "success"
+                        else:
+                            add_log_entry("Setting status to success")
+                            result_data["status"] = "success"
         
         # Generate summary
         end_time = time.time()
