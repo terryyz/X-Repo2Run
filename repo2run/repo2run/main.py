@@ -6,7 +6,7 @@ Main entry point for Repo2Run.
 This script handles the workflow of:
 1. Cloning or using a local repository
 2. Extracting and unifying requirements
-3. Installing dependencies using UV
+3. Installing dependencies using UV or pip
 4. Running tests
 
 Usage:
@@ -21,6 +21,7 @@ Options:
     --timeout SECONDS       Timeout in seconds (default: 7200 - 2 hours)
     --verbose               Enable verbose logging
     --overwrite             Overwrite existing output directory if it exists
+    --use-uv                Use UV for dependency management (default: False, use pip/venv)
 """
 
 import argparse
@@ -90,6 +91,11 @@ def parse_arguments():
         action='store_true',
         help='Overwrite existing output directory if it exists'
     )
+    parser.add_argument(
+        '--use-uv',
+        action='store_true',
+        help='Use UV for dependency management (default: False, use pip/venv)'
+    )
     
     return parser.parse_args()
 
@@ -126,7 +132,8 @@ def main():
         "configuration": {
             "output_directory": str(output_dir),
             "overwrite_mode": args.overwrite,
-            "timeout": args.timeout
+            "timeout": args.timeout,
+            "use_uv": args.use_uv
         },
         "dependencies": {
             "found": 0,
@@ -158,7 +165,7 @@ def main():
         }
         result_data["logs"].append(log_entry)
         
-        # Also log to regular logger
+        # Also log to regular logger with simplified format
         if level == "INFO":
             logger.info(message)
         elif level == "WARNING":
@@ -167,6 +174,7 @@ def main():
             logger.error(message)
     
     add_log_entry("Starting Repo2Run")
+    add_log_entry(f"Using {'UV' if args.use_uv else 'pip/venv'} for dependency management")
     
     try:
         # Initialize repository
@@ -226,46 +234,52 @@ def main():
         pyproject_path = project_dir / "pyproject.toml"
         venv_path = project_dir / '.venv'
         
-        # Create a requirements.in file for uv pip compile
+        # Create a requirements.in file
         with open(requirements_in_path, 'w') as f:
             f.write('\n'.join(unified_requirements))
         add_log_entry(f"Created requirements.in file at {requirements_in_path}")
         
-        # Compile requirements with --resolution lowest to ensure compatibility with lower bounds
-        add_log_entry("Compiling requirements with --resolution lowest")
-        try:
-            compiled_result = subprocess.run(
-                ['uv', 'pip', 'compile', 'requirements.in', '--resolution', 'lowest', '--output-file', 'requirements.txt'],
-                cwd=project_dir,
-                check=True,
-                capture_output=True,
-                text=True
-            )
-            add_log_entry("Successfully compiled requirements with lowest resolution")
+        # Different handling based on whether UV is being used
+        if args.use_uv:
+            # Compile requirements with --resolution lowest to ensure compatibility with lower bounds
+            add_log_entry("Compiling requirements with UV using --resolution lowest")
+            try:
+                compiled_result = subprocess.run(
+                    ['uv', 'pip', 'compile', 'requirements.in', '--resolution', 'lowest', '--output-file', 'requirements.txt'],
+                    cwd=project_dir,
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
+                add_log_entry("Successfully compiled requirements with lowest resolution")
+                
+                # Read the compiled requirements
+                if compiled_requirements_path.exists():
+                    with open(compiled_requirements_path, 'r') as f:
+                        compiled_requirements_content = f.read()
+                    
+                    # Parse the compiled requirements to get exact versions
+                    exact_requirements = []
+                    for line in compiled_requirements_content.splitlines():
+                        # Skip comments and empty lines
+                        if line.strip() and not line.strip().startswith('#'):
+                            exact_requirements.append(line.strip())
+                    
+                    add_log_entry(f"Parsed {len(exact_requirements)} exact requirements with lowest versions")
+                    
+                    # Use these exact requirements for installation
+                    unified_requirements = exact_requirements
+                    result_data["compiled_requirements"] = exact_requirements
+                else:
+                    add_log_entry("Compiled requirements.txt not found, using original requirements", level="WARNING")
+            except subprocess.CalledProcessError as e:
+                add_log_entry(f"Failed to compile requirements with lowest resolution: {e.stderr}", level="WARNING")
+                add_log_entry("Falling back to original requirements", level="WARNING")
+        else:
+            # When using pip, just copy requirements.in to requirements.txt
+            add_log_entry("Copying requirements.in to requirements.txt (using pip)")
+            shutil.copy(requirements_in_path, compiled_requirements_path)
             
-            # Read the compiled requirements
-            if compiled_requirements_path.exists():
-                with open(compiled_requirements_path, 'r') as f:
-                    compiled_requirements_content = f.read()
-                
-                # Parse the compiled requirements to get exact versions
-                exact_requirements = []
-                for line in compiled_requirements_content.splitlines():
-                    # Skip comments and empty lines
-                    if line.strip() and not line.strip().startswith('#'):
-                        exact_requirements.append(line.strip())
-                
-                add_log_entry(f"Parsed {len(exact_requirements)} exact requirements with lowest versions")
-                
-                # Use these exact requirements for installation
-                unified_requirements = exact_requirements
-                result_data["compiled_requirements"] = exact_requirements
-            else:
-                add_log_entry("Compiled requirements.txt not found, using original requirements", level="WARNING")
-        except subprocess.CalledProcessError as e:
-            add_log_entry(f"Failed to compile requirements with lowest resolution: {e.stderr}", level="WARNING")
-            add_log_entry("Falling back to original requirements", level="WARNING")
-        
         # Check if pyproject.toml already exists in the original repo
         original_pyproject_path = repo_path / "pyproject.toml"
         project_already_initialized = original_pyproject_path.exists()
@@ -275,170 +289,92 @@ def main():
             shutil.copy(original_pyproject_path, pyproject_path)
             add_log_entry(f"Copied existing pyproject.toml to {pyproject_path}")
         
-        # Initialize project with uv
-        add_log_entry("Initializing project with uv")
-        
-        try:
-            # Install Python 3.10 using uv
-            add_log_entry("Installing Python 3.10 using uv")
-            result = subprocess.run(
-                ['uv', 'python', 'install', '3.10'],
-                cwd=project_dir,
-                check=True,
-                capture_output=True,
-                text=True
-            )
-            add_log_entry(f"Python 3.10 installation result: {result.stdout}")
+        # Initialize project
+        if args.use_uv:
+            add_log_entry("Initializing project with uv")
             
-            # Pin Python version to 3.10 using uv python pin
-            add_log_entry("Pinning Python version to 3.10")
-            result = subprocess.run(
-                ['uv', 'python', 'pin', '3.10'],
-                cwd=project_dir,
-                check=True,
-                capture_output=True,
-                text=True
-            )
-            add_log_entry(f"Python version pinning result: {result.stdout}")
-            
-            # Now initialize the project or create venv
-            if project_already_initialized:
-                add_log_entry("Project already initialized (pyproject.toml exists)")
-                # Just create the venv with Python 3.10
-                result = subprocess.run(
-                    ['uv', 'venv', str(venv_path)],
-                    cwd=project_dir,
-                    check=True,
-                    capture_output=True,
-                    text=True
-                )
-            else:
-                # Initialize project with uv init
-                result = subprocess.run(
-                    ['uv', 'init'],
-                    cwd=project_dir,
-                    check=True,
-                    capture_output=True,
-                    text=True
-                )
-            add_log_entry(f"Virtual environment created at {venv_path} with Python 3.10")
-            
-        except subprocess.CalledProcessError as e:
-            add_log_entry(f"Failed to initialize project: {e.stderr}", level="ERROR")
-            result_data["status"] = "error"
-            result_data["error"] = f"Failed to initialize project: {e.stderr}"
-            # Write the result to results.jsonl
-            with open(results_jsonl_path, "a") as f:
-                f.write(json.dumps(result_data) + "\n")
-            raise RuntimeError(f"Failed to initialize project: {e.stderr}")
-        
-        # Install dependencies using uv add
-        add_log_entry(f"Installing {len(unified_requirements)} requirements using UV")
-        installation_results = []
-        
-        # First, try to install all requirements at once from the compiled requirements.txt
-        if compiled_requirements_path.exists():
             try:
-                add_log_entry("Installing all requirements from compiled requirements.txt")
-                cmd = ['uv', 'pip', 'install', '-r', 'requirements.txt', '--no-deps']
-                
+                # Install Python 3.10 using uv
+                add_log_entry("Installing Python 3.10 using uv")
                 result = subprocess.run(
-                    cmd,
+                    ['uv', 'python', 'install', '3.10'],
                     cwd=project_dir,
                     check=True,
                     capture_output=True,
                     text=True
                 )
+                add_log_entry(f"Python 3.10 installation result: {result.stdout}")
                 
-                add_log_entry("Successfully installed all requirements from compiled requirements.txt")
+                # Pin Python version to 3.10 using uv python pin
+                add_log_entry("Pinning Python version to 3.10")
+                result = subprocess.run(
+                    ['uv', 'python', 'pin', '3.10'],
+                    cwd=project_dir,
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
+                add_log_entry(f"Python version pinning result: {result.stdout}")
                 
-                # Mark all requirements as successfully installed
-                for req in unified_requirements:
-                    installation_results.append({
-                        'package': req,
-                        'success': True,
-                        'output': "Installed via compiled requirements.txt",
-                        'method': 'compiled'
-                    })
+                # Now initialize the project or create venv
+                if project_already_initialized:
+                    add_log_entry("Project already initialized (pyproject.toml exists)")
+                    # Just create the venv with Python 3.10
+                    result = subprocess.run(
+                        ['uv', 'venv', str(venv_path)],
+                        cwd=project_dir,
+                        check=True,
+                        capture_output=True,
+                        text=True
+                    )
+                else:
+                    # Initialize project with uv init
+                    result = subprocess.run(
+                        ['uv', 'init'],
+                        cwd=project_dir,
+                        check=True,
+                        capture_output=True,
+                        text=True
+                    )
+                add_log_entry(f"Virtual environment created at {venv_path} with Python 3.10")
+                
             except subprocess.CalledProcessError as e:
-                add_log_entry(f"Failed to install from compiled requirements.txt: {e.stderr}", level="WARNING")
-                add_log_entry("Falling back to individual package installation", level="WARNING")
-                # Continue with individual package installation below
+                add_log_entry(f"Failed to initialize project with UV: {e.stderr}", level="ERROR")
+                result_data["status"] = "error"
+                result_data["error"] = f"Failed to initialize project with UV: {e.stderr}"
+                # Write the result to results.jsonl
+                with open(results_jsonl_path, "a") as f:
+                    f.write(json.dumps(result_data) + "\n")
+                raise RuntimeError(f"Failed to initialize project with UV: {e.stderr}")
+        else:
+            add_log_entry("Initializing project with standard venv")
+            
+            try:
+                # Create a virtual environment using venv module
+                import venv
+                add_log_entry(f"Creating virtual environment at {venv_path}")
+                venv.create(venv_path, with_pip=True)
+                add_log_entry(f"Virtual environment created at {venv_path}")
+                
+            except Exception as e:
+                add_log_entry(f"Failed to initialize project with venv: {str(e)}", level="ERROR")
+                result_data["status"] = "error"
+                result_data["error"] = f"Failed to initialize project with venv: {str(e)}"
+                # Write the result to results.jsonl
+                with open(results_jsonl_path, "a") as f:
+                    f.write(json.dumps(result_data) + "\n")
+                raise RuntimeError(f"Failed to initialize project with venv: {str(e)}")
         
-        # If we don't have a compiled requirements file or the bulk installation failed,
-        # install packages individually
-        if not installation_results:
-            for req in unified_requirements:
-                try:
-                    add_log_entry(f"Installing {req}")
-                    
-                    # Use uv add to install the requirement with --frozen flag to skip dependency resolution
-                    cmd = ['uv', 'add', req, '--frozen', '--resolution', 'lowest-direct']
-                    
-                    # First try with --frozen flag
-                    try:
-                        result = subprocess.run(
-                            cmd,
-                            cwd=project_dir,
-                            check=True,
-                            capture_output=True,
-                            text=True
-                        )
-                        
-                        installation_results.append({
-                            'package': req,
-                            'success': True,
-                            'output': result.stdout,
-                            'method': 'frozen'
-                        })
-                        
-                        add_log_entry(f"Successfully installed {req} with --frozen flag")
-                    except subprocess.CalledProcessError as e:
-                        add_log_entry(f"Failed to install {req} with --frozen flag: {e.stderr}", level="WARNING")
-                        
-                        # If it fails with --frozen, try with additional flags
-                        try:
-                            # Try with --no-deps as an alternative
-                            cmd_alt = ['uv', 'add', req, '--no-deps']
-                            result = subprocess.run(
-                                cmd_alt,
-                                cwd=project_dir,
-                                check=True,
-                                capture_output=True,
-                                text=True
-                            )
-                            
-                            installation_results.append({
-                                'package': req,
-                                'success': True,
-                                'output': result.stdout,
-                                'method': 'no-deps'
-                            })
-                            
-                            add_log_entry(f"Successfully installed {req} with --no-deps flag")
-                        except subprocess.CalledProcessError as e2:
-                            add_log_entry(f"Failed to install {req} with --no-deps flag: {e2.stderr}", level="WARNING")
-                            
-                            installation_results.append({
-                                'package': req,
-                                'success': False,
-                                'error': f"Failed with --frozen: {e.stderr}\nFailed with --no-deps: {e2.stderr}"
-                            })
-                    
-                except Exception as e:
-                    add_log_entry(f"Unexpected error installing {req}: {str(e)}", level="WARNING")
-                    
-                    installation_results.append({
-                        'package': req,
-                        'success': False,
-                        'error': str(e)
-                    })
+        # Install dependencies
+        dependency_installer = DependencyInstaller(project_dir, use_uv=args.use_uv, logger=logger)
+        add_log_entry(f"Installing {len(unified_requirements)} requirements using {'UV' if args.use_uv else 'pip'}")
+        installation_results = dependency_installer.install_requirements(unified_requirements, venv_path)
         
         # Store installation results in the result data
         result_data["installation_results"] = installation_results
         result_data["dependencies"]["installed"] = sum(1 for r in installation_results if r["success"])
         
-        # Run tests using uv run
+        # Run tests
         # Copy necessary files from the original repo to the project directory for testing
         add_log_entry("Copying source files from repository to project directory for testing")
         try:
@@ -454,7 +390,7 @@ def main():
             add_log_entry(f"Error copying source files: {str(e)}", level="WARNING")
         
         # Run tests in the project directory
-        test_runner = TestRunner(project_dir, logger=logger)
+        test_runner = TestRunner(project_dir, venv_path=venv_path, use_uv=args.use_uv, logger=logger)
         test_results = test_runner.run_tests()
         
         # Store test results in the result data

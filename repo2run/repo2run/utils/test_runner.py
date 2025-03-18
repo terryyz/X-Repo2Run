@@ -34,16 +34,18 @@ class TestRunner:
     Finds and runs tests in a repository.
     """
     
-    def __init__(self, repo_path, venv_path=None, logger=None):
+    def __init__(self, repo_path, venv_path=None, use_uv=True, logger=None):
         """
         Initialize the test runner.
         
         Args:
             repo_path (Path): Path to the repository.
             venv_path (Path, optional): Path to the virtual environment. If None, a default path is used.
+            use_uv (bool): Whether to use UV for package management. If False, use pip/venv.
             logger (logging.Logger, optional): Logger instance. If None, a new logger is created.
         """
         self.repo_path = Path(repo_path)
+        self.use_uv = use_uv
         
         if venv_path is None:
             self.venv_path = self.repo_path / '.venv'
@@ -99,338 +101,468 @@ class TestRunner:
         # Find the best working directory
         working_dir = self._find_best_working_dir()
         
-        try:
-            # Check if pytest is installed using uv list
-            result = subprocess.run(
-                ['uv', 'list', 'pytest'],
-                cwd=working_dir,
-                check=False,
-                capture_output=True,
-                text=True
-            )
-            
-            if result.returncode == 0 and 'pytest' in result.stdout:
-                self.logger.info(f"pytest is installed: {result.stdout.strip()}")
-                return True
-            else:
-                self.logger.warning(f"pytest is not installed")
+        if self.use_uv:
+            try:
+                # Check if pytest is installed using uv list
+                result = subprocess.run(
+                    ['uv', 'list', 'pytest'],
+                    cwd=working_dir,
+                    check=False,
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode == 0 and 'pytest' in result.stdout:
+                    self.logger.info(f"pytest is installed: {result.stdout.strip()}")
+                    return True
+                else:
+                    self.logger.warning(f"pytest is not installed")
+                    return False
+            except Exception as e:
+                self.logger.warning(f"Failed to check if pytest is installed with UV: {str(e)}")
                 return False
-        except Exception as e:
-            self.logger.warning(f"Failed to check if pytest is installed: {str(e)}")
-            return False
+        else:
+            # Use pip to check if pytest is installed
+            try:
+                # Get the path to the pip executable in the virtual environment
+                if sys.platform == 'win32':
+                    pip_path = self.venv_path / 'Scripts' / 'pip.exe'
+                else:
+                    pip_path = self.venv_path / 'bin' / 'pip'
+                
+                if not pip_path.exists():
+                    self.logger.warning(f"pip not found in virtual environment at {pip_path}")
+                    return False
+                
+                # Check if pytest is installed using pip list
+                result = subprocess.run(
+                    [str(pip_path), 'list'],
+                    cwd=working_dir,
+                    check=False,
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode == 0 and 'pytest' in result.stdout:
+                    self.logger.info("pytest is installed via pip")
+                    return True
+                else:
+                    self.logger.warning(f"pytest is not installed via pip")
+                    return False
+            except Exception as e:
+                self.logger.warning(f"Failed to check if pytest is installed via pip: {str(e)}")
+                return False
     
     def install_pytest(self):
         """
-        Install pytest in the virtual environment using uv.
+        Install pytest in the virtual environment using either UV or pip.
         
         Returns:
             bool: True if pytest was successfully installed, False otherwise.
         """
-        self.logger.info("Installing pytest using uv")
+        # Find the best working directory
+        working_dir = self._find_best_working_dir()
+        
+        if self.use_uv:
+            self.logger.info("Installing pytest using uv")
+            try:
+                self.logger.info(f"Installing pytest for Python")
+                
+                # Use uv add to install pytest as a dev dependency
+                result = subprocess.run(
+                    ['uv', 'add', 'pytest', '--dev', '--frozen', '--resolution', 'lowest-direct'],
+                    cwd=working_dir,
+                    check=False,
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode == 0:
+                    self.logger.info("pytest installed successfully using uv")
+                    return True
+                else:
+                    self.logger.error(f"Failed to install pytest using uv: {result.stderr}")
+                    return False
+            except Exception as e:
+                self.logger.error(f"Failed to install pytest using uv: {str(e)}")
+                return False
+        else:
+            self.logger.info("Installing pytest using pip")
+            try:
+                # Get the path to the pip executable in the virtual environment
+                if sys.platform == 'win32':
+                    pip_path = self.venv_path / 'Scripts' / 'pip.exe'
+                else:
+                    pip_path = self.venv_path / 'bin' / 'pip'
+                
+                if not pip_path.exists():
+                    self.logger.error(f"pip not found in virtual environment at {pip_path}")
+                    return False
+                
+                # Install pytest using pip
+                result = subprocess.run(
+                    [str(pip_path), 'install', 'pytest', '--no-cache-dir'],
+                    cwd=working_dir,
+                    check=False,
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode == 0:
+                    self.logger.info("pytest installed successfully using pip")
+                    return True
+                else:
+                    self.logger.error(f"Failed to install pytest using pip: {result.stderr}")
+                    return False
+            except Exception as e:
+                self.logger.error(f"Failed to install pytest using pip: {str(e)}")
+                return False
+    
+    def collect_tests(self):
+        """
+        Collect tests using pytest.
+        
+        Returns:
+            dict: Dictionary with test collection results.
+        """
+        self.logger.info("Collecting tests using pytest")
         
         # Find the best working directory
         working_dir = self._find_best_working_dir()
         
+        # Make sure pytest is installed
+        if not self.check_pytest():
+            self.logger.info("pytest is not installed. Installing...")
+            if not self.install_pytest():
+                self.logger.error("Failed to install pytest")
+                return {
+                    "success": False,
+                    "error": "Failed to install pytest",
+                    "tests": []
+                }
+        
         try:
-            self.logger.info(f"Installing pytest for Python")
+            # Run pytest in collect-only mode
+            self.logger.info("Running pytest in collect-only mode")
             
-            # Use uv add to install pytest as a dev dependency
+            # Use --collect-only to just collect the tests
+            command = ["pytest", "--collect-only", "-v"]
+            
+            result = self._run_in_venv(command, cwd=working_dir)
+            output = result.get("stdout", "")
+            
+            # Extract test names using regex
+            tests = []
+            collection_pattern = re.compile(r"<Function\s+(\w+)\s*>|<TestCaseFunction\s+(\w+)\s*>")
+            for match in collection_pattern.finditer(output):
+                test_name = match.group(1) or match.group(2)
+                if test_name:
+                    tests.append(test_name)
+            
+            self.logger.info(f"Collected {len(tests)} tests")
+            
+            return {
+                "success": True,
+                "tests": tests
+            }
+        except Exception as e:
+            self.logger.error(f"Error collecting tests: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "tests": []
+            }
+    
+    def _find_best_working_dir(self):
+        """
+        Find the best working directory for running tests.
+        This is typically the directory containing setup.py or pyproject.toml.
+        
+        Returns:
+            Path: The best working directory.
+        """
+        setup_py = self.repo_path / "setup.py"
+        pyproject_toml = self.repo_path / "pyproject.toml"
+        
+        if setup_py.exists():
+            self.logger.info(f"Using directory with setup.py: {self.repo_path}")
+            return self.repo_path
+        elif pyproject_toml.exists():
+            self.logger.info(f"Using directory with pyproject.toml: {self.repo_path}")
+            return self.repo_path
+        
+        # Look for setup.py or pyproject.toml in subdirectories
+        for item in self.repo_path.glob("**/setup.py"):
+            self.logger.info(f"Using directory with setup.py: {item.parent}")
+            return item.parent
+        
+        for item in self.repo_path.glob("**/pyproject.toml"):
+            self.logger.info(f"Using directory with pyproject.toml: {item.parent}")
+            return item.parent
+        
+        # If no setup.py or pyproject.toml, look for a tests directory
+        for item in self.repo_path.glob("**/tests"):
+            if item.is_dir():
+                self.logger.info(f"Using parent of tests directory: {item.parent}")
+                return item.parent
+        
+        # If nothing found, use the repository root
+        self.logger.info(f"Using repository root: {self.repo_path}")
+        return self.repo_path
+    
+    def _run_in_venv(self, command, cwd=None, env=None):
+        """
+        Run a command in the virtual environment.
+        
+        Args:
+            command (list): Command to run.
+            cwd (Path, optional): Working directory. If None, the repository root is used.
+            env (dict, optional): Environment variables. If None, the current environment is used.
+        
+        Returns:
+            dict: Dictionary with command result.
+        """
+        if cwd is None:
+            cwd = self.repo_path
+        
+        if env is None:
+            env = os.environ.copy()
+        
+        self.logger.info(f"Running command: {' '.join(command)}")
+        
+        # Get the path to the Python executable in the virtual environment
+        if sys.platform == 'win32':
+            python_path = self.venv_path / 'Scripts' / 'python.exe'
+        else:
+            python_path = self.venv_path / 'bin' / 'python'
+        
+        if not python_path.exists():
+            self.logger.error(f"Python executable not found in virtual environment at {python_path}")
+            return {
+                "success": False,
+                "error": f"Python executable not found in virtual environment at {python_path}",
+                "returncode": -1,
+                "stdout": "",
+                "stderr": f"Python executable not found in virtual environment at {python_path}"
+            }
+        
+        if command[0] == "pytest":
+            # If the command starts with pytest, use python -m pytest instead
+            command = [str(python_path), "-m", "pytest"] + command[1:]
+        else:
+            # Otherwise, prepend the Python path
+            command = [str(python_path)] + command
+        
+        try:
             result = subprocess.run(
-                ['uv', 'add', 'pytest', '--dev', '--frozen', '--resolution', 'lowest-direct'],
-                cwd=working_dir,
+                command,
+                cwd=cwd,
+                env=env,
                 check=False,
                 capture_output=True,
                 text=True
             )
             
-            if result.returncode == 0:
-                self.logger.info("pytest installed successfully using uv")
-                return True
-            else:
-                self.logger.error(f"Failed to install pytest using uv: {result.stderr}")
-                return False
+            return {
+                "success": result.returncode == 0,
+                "returncode": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr
+            }
         except Exception as e:
-            self.logger.error(f"Failed to install pytest using uv: {str(e)}")
-            return False
-    
-    def collect_tests(self):
-        """
-        Collect test cases using pytest.
-        
-        Returns:
-            list: List of test case identifiers.
-        """
-        self.logger.info("Collecting test cases")
-        
-        # Find the actual working directory to use
-        working_dir = self._find_best_working_dir()
-        self.logger.info(f"Using working directory for pytest: {working_dir}")
-        
-        # Get all test files
-        test_files = self.find_tests()
-        
-        if test_files:
-            self.logger.info(f"Found {len(test_files)} potential test files in {working_dir}:")
-            for test_file in test_files:
-                self.logger.info(f"  Test file: {test_file.relative_to(working_dir)}")
-                
-                # Check if the file is importable
-                try:
-                    with open(test_file, 'r') as f:
-                        first_few_lines = ''.join(f.readline() for _ in range(10))
-                    self.logger.debug(f"First few lines of {test_file.name}:\n{first_few_lines}")
-                except Exception as e:
-                    self.logger.warning(f"Could not read {test_file}: {str(e)}")
-        else:
-            self.logger.warning(f"No test files found in {working_dir}")
-                
-        try:
-            # Create a modified environment with PYTHONPATH set to include the working directory
-            env = dict(os.environ)
-            if 'PYTHONPATH' in env:
-                env['PYTHONPATH'] = f"{working_dir}:{env['PYTHONPATH']}"
-            else:
-                env['PYTHONPATH'] = str(working_dir)
-            
-            self.logger.info(f"Setting PYTHONPATH to: {env['PYTHONPATH']}")
-            
-            # Run pytest with verbose output to collect tests
-            result = self._run_in_venv(
-                ['pytest', '--collect-only', '-v'],
-                cwd=working_dir,
-                env=env
-            )
-            
-            self.logger.info(f"Test collection output:\n{result.stdout}")
-            if result.stderr:
-                self.logger.warning(f"Test collection stderr:\n{result.stderr}")
-                
-                # Check if this is a dependency issue
-                if "Failed to build" in result.stderr or "ImportError" in result.stderr:
-                    self.logger.warning("Dependency issues detected during test collection")
-            
-            # Extract test cases using regex
-            test_case_pattern = re.compile(r'^([\w/]+\.py::[\w_]+)$', re.MULTILINE)
-            test_cases = test_case_pattern.findall(result.stdout)
-            
-            self.logger.info(f"Collected {len(test_cases)} test cases")
-            return test_cases
-            
-        except Exception as e:
-            self.logger.warning(f"Failed to collect test cases: {str(e)}")
-            return []
-    
-    def _find_best_working_dir(self):
-        """
-        Find the best working directory to use for running tests.
-        
-        Returns:
-            Path: The best working directory to use.
-        """
-        # Check if there's a subdirectory that looks like the main project
-        # Common patterns for main project directories
-        common_names = [
-            "src", "app", "lib", 
-            # Look for directories with the same name as the parent directory
-            self.repo_path.name, 
-            # Look for directories with "-master" suffix (common in GitHub downloads)
-            f"{self.repo_path.name}-master"
-        ]
-        
-        # First, check if there's a tests directory in the repo_path
-        if (self.repo_path / "tests").is_dir() or (self.repo_path / "test").is_dir():
-            self.logger.info(f"Found tests directory in repository root")
-            return self.repo_path
-        
-        # Check for common project directory names
-        for name in common_names:
-            potential_dir = self.repo_path / name
-            if potential_dir.is_dir():
-                # Check if this directory has tests
-                if (potential_dir / "tests").is_dir() or (potential_dir / "test").is_dir():
-                    self.logger.info(f"Found tests directory in {name}/")
-                    return potential_dir
-                # Check if this directory has Python files
-                if list(potential_dir.glob("*.py")):
-                    self.logger.info(f"Found Python files in {name}/")
-                    return potential_dir
-        
-        # If we couldn't find a better directory, use the repo_path
-        return self.repo_path
-    
-    def _run_in_venv(self, command, cwd=None, env=None):
-        """
-        Run a command in the virtual environment using uv run.
-        
-        Args:
-            command (list): Command to run as a list of strings.
-            cwd (Path, optional): Working directory. Defaults to None.
-            env (dict, optional): Environment variables. Defaults to None.
-            
-        Returns:
-            subprocess.CompletedProcess: Result of the command.
-        """
-        # Use uv run for all commands
-        uv_command = ['uv', 'run']
-        uv_command.extend(command)
-                
-        # Ensure we're using the provided working directory or the repository path
-        # Convert to absolute path to avoid any relative path issues
-        working_dir = cwd or self.repo_path
-        working_dir = Path(working_dir).absolute()
-        
-        self.logger.info(f"Running command with uv: {' '.join(uv_command)}")
-        self.logger.info(f"Using working directory: {working_dir}")
-        
-        # Use the context manager to temporarily change the working directory
-        with change_dir(working_dir):
-            # Log the actual current working directory to verify
-            self.logger.info(f"Current working directory: {os.getcwd()}")
-            
-            return subprocess.run(
-                uv_command,
-                # No need to specify cwd here as we've already changed directory
-                check=False,
-                capture_output=True,
-                text=True,
-                env=env
-            )
+            self.logger.error(f"Error running command: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "returncode": -1,
+                "stdout": "",
+                "stderr": str(e)
+            }
     
     def run_tests(self):
-        """Run tests using pytest."""
-        self.logger.info("Running tests")
+        """
+        Run tests using pytest.
         
-        # Check if pytest is installed
-        if not self.check_pytest():
-            self.logger.info("pytest is not installed. Attempting to install it.")
-            if not self.install_pytest():
-                self.logger.error("Failed to install pytest. Cannot run tests.")
-                return {
-                    "status": "error",
-                    "message": "Failed to install pytest",
-                    "tests_found": 0,
-                    "tests_passed": 0,
-                    "tests_failed": 0,
-                    "tests_skipped": 0,
-                    "test_results": []
-                }
+        Returns:
+            dict: Dictionary with test results.
+        """
+        self.logger.info("Running tests using pytest")
+        
+        # Find test files
+        test_files = self.find_tests()
+        
+        if not test_files:
+            self.logger.warning("No test files found")
+            return {
+                "status": "success",
+                "tests_found": 0,
+                "tests_passed": 0,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+                "test_results": []
+            }
         
         # Find the best working directory
         working_dir = self._find_best_working_dir()
         
-        # Create a modified environment with PYTHONPATH set to include the working directory
-        env = dict(os.environ)
-        if 'PYTHONPATH' in env:
-            env['PYTHONPATH'] = f"{working_dir}:{env['PYTHONPATH']}"
-        else:
-            env['PYTHONPATH'] = str(working_dir)
-        
-        # Add Django settings module if not already set
-        if 'DJANGO_SETTINGS_MODULE' not in env:
-            env['DJANGO_SETTINGS_MODULE'] = 'app.settings'
-        
-        self.logger.info(f"Setting PYTHONPATH to: {env['PYTHONPATH']}")
-        self.logger.info(f"Using Django settings module: {env['DJANGO_SETTINGS_MODULE']}")
-        
-        try:
-            # First collect tests to verify we can find them
-            test_cases = self.collect_tests()
-            
-            # Check if we have test files even if no test cases were collected
-            test_files = self.find_tests()
-            
-            if not test_cases:
-                self.logger.warning("No test cases found")
-                
-                if test_files:
-                    self.logger.warning(f"Found {len(test_files)} test files but couldn't collect test cases. This is likely due to dependency issues.")
-                    # We'll still return 0 tests found here, but the main.py will handle this case
-                    self.logger.info("Returning 0 tests found, but main.py will update this based on test files")
-                else:
-                    self.logger.warning("No test files found either")
-                
+        # Make sure pytest is installed
+        if not self.check_pytest():
+            self.logger.info("pytest is not installed. Installing...")
+            if not self.install_pytest():
+                self.logger.error("Failed to install pytest")
                 return {
-                    "status": "success",
-                    "message": "No test cases found",
-                    "tests_found": 0,
+                    "status": "error",
+                    "error": "Failed to install pytest",
+                    "tests_found": len(test_files),
                     "tests_passed": 0,
-                    "tests_failed": 0,
+                    "tests_failed": len(test_files),
                     "tests_skipped": 0,
                     "test_results": []
                 }
+        
+        try:
+            # Run pytest with JUnit XML output
+            self.logger.info("Running pytest with JUnit XML output")
             
-            # Run pytest with verbose output
-            result = self._run_in_venv(
-                ['pytest', '-v', '--disable-warnings'],
-                cwd=working_dir,
-                env=env
-            )
+            # Create an output directory for test results
+            output_dir = self.repo_path / "test-results"
+            output_dir.mkdir(exist_ok=True)
             
-            # Parse test results
+            # Use JUnit XML output for detailed test results
+            xml_path = output_dir / "junit.xml"
+            
+            # Command to run pytest with JUnit XML output
+            command = [
+                "pytest",
+                "-v",
+                f"--junitxml={xml_path}",
+                "--color=yes"
+            ]
+            
+            result = self._run_in_venv(command, cwd=working_dir)
+            
+            if result["success"]:
+                self.logger.info("Tests passed")
+            else:
+                self.logger.warning(f"Tests failed with return code {result['returncode']}")
+            
+            # Parse the output to get test results
+            output = result.get("stdout", "")
+            
+            # Extract test summary
+            tests_found = 0
+            tests_passed = 0
+            tests_failed = 0
+            tests_skipped = 0
+            
+            # Try to parse the test summary using regex
+            summary_pattern = re.compile(r"=+\s*(\d+)\s+passed[,\s]+(\d+)\s+skipped[,\s]+(\d+)\s+failed")
+            for line in output.splitlines():
+                summary_match = summary_pattern.search(line)
+                if summary_match:
+                    tests_passed = int(summary_match.group(1))
+                    tests_skipped = int(summary_match.group(2))
+                    tests_failed = int(summary_match.group(3))
+                    tests_found = tests_passed + tests_skipped + tests_failed
+                    break
+            
+            # If we couldn't parse the summary, try to count the tests
+            if tests_found == 0:
+                # Collect tests to get count
+                collected = self.collect_tests()
+                if collected["success"]:
+                    tests_found = len(collected["tests"])
+                else:
+                    # If test collection failed, use number of test files instead
+                    tests_found = len(test_files)
+                
+                if "error" in result:
+                    # All tests failed if there was an error
+                    tests_failed = tests_found
+                elif "no tests ran" in output.lower():
+                    # No tests ran
+                    tests_skipped = tests_found
+                
+            # Parse individual test results
             test_results = []
-            passed = 0
-            failed = 0
-            skipped = 0
+            failure_pattern = re.compile(r"(FAILED|ERROR)\s+(.+?)::(.+?)\s+-")
+            failure_messages = {}
             
-            # Parse the output to count tests
-            for line in result.stdout.splitlines():
-                if ' PASSED ' in line:
-                    test_name = line.split(' PASSED ')[0].strip()
-                    test_results.append({
-                        "name": test_name,
-                        "status": "passed"
-                    })
-                    passed += 1
-                elif ' FAILED ' in line:
-                    test_name = line.split(' FAILED ')[0].strip()
-                    test_results.append({
-                        "name": test_name,
-                        "status": "failed"
-                    })
-                    failed += 1
-                elif ' ERROR ' in line:
-                    test_name = line.split(' ERROR ')[0].strip()
-                    test_results.append({
-                        "name": test_name,
-                        "status": "error"
-                    })
-                    failed += 1
-                elif ' SKIPPED ' in line:
-                    test_name = line.split(' SKIPPED ')[0].strip()
-                    test_results.append({
-                        "name": test_name,
-                        "status": "skipped"
-                    })
-                    skipped += 1
+            # Extract failure messages
+            current_test = None
+            capturing_message = False
+            message_lines = []
             
-            # Calculate total tests found
-            total_tests = passed + failed + skipped
+            for line in output.splitlines():
+                # Check if this line starts a new failure
+                failure_match = failure_pattern.search(line)
+                if failure_match:
+                    # If we were capturing a message, save it
+                    if current_test and capturing_message:
+                        failure_messages[current_test] = "\n".join(message_lines)
+                        message_lines = []
+                    
+                    current_test = f"{failure_match.group(2)}::{failure_match.group(3)}"
+                    capturing_message = True
+                    continue
+                
+                # Check if this line is part of a failure message
+                if capturing_message:
+                    if line.strip() and not line.startswith("=") and not line.startswith("_"):
+                        message_lines.append(line.strip())
+                    elif line.startswith("=") and "short test summary info" in line.lower():
+                        # End of failure message
+                        failure_messages[current_test] = "\n".join(message_lines)
+                        capturing_message = False
             
-            status = "success" if failed == 0 else "failure"
-            message = f"{passed} passed, {failed} failed, {skipped} skipped"
+            # Save the last failure message if we were capturing one
+            if current_test and capturing_message:
+                failure_messages[current_test] = "\n".join(message_lines)
             
-            self.logger.info(f"Test results: {message}")
+            # Create test results
+            for test_file in test_files:
+                test_name = test_file.relative_to(self.repo_path)
+                
+                # Check if this test file had failures
+                test_failed = False
+                failure_message = ""
+                
+                for key, message in failure_messages.items():
+                    if str(test_name) in key:
+                        test_failed = True
+                        failure_message = message
+                        break
+                
+                if test_failed:
+                    test_results.append({
+                        "name": str(test_name),
+                        "status": "failure",
+                        "message": failure_message
+                    })
+                else:
+                    test_results.append({
+                        "name": str(test_name),
+                        "status": "success",
+                        "message": ""
+                    })
             
             return {
-                "status": status,
-                "message": message,
-                "tests_found": total_tests,
-                "tests_passed": passed,
-                "tests_failed": failed,
-                "tests_skipped": skipped,
-                "test_results": test_results,
-                "stdout": result.stdout,
-                "stderr": result.stderr
+                "status": "success" if tests_failed == 0 else "failure",
+                "tests_found": tests_found,
+                "tests_passed": tests_passed,
+                "tests_failed": tests_failed,
+                "tests_skipped": tests_skipped,
+                "test_results": test_results
             }
             
         except Exception as e:
-            self.logger.error(f"Failed to run tests: {str(e)}")
+            self.logger.error(f"Error running tests: {str(e)}")
             return {
                 "status": "error",
-                "message": str(e),
-                "tests_found": 0,
+                "error": str(e),
+                "tests_found": len(test_files),
                 "tests_passed": 0,
-                "tests_failed": 0,
+                "tests_failed": len(test_files),
                 "tests_skipped": 0,
                 "test_results": []
             } 

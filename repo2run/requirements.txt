@@ -1,4 +1,7 @@
 tomli>=2.0.0
 pyyaml>=6.0
 pytest>=7.0.0
-pipreqs>=0.4.11 
+pipreqs>=0.4.11
+
+# Optional dependencies
+# uv>=0.1.0  # Install this for faster dependency resolution with --use-uv flag

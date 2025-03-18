@@ -28,6 +28,9 @@ setup(
         "tomli>=2.0.0",
         "pyyaml>=6.0",
     ],
+    extras_require={
+        "uv": ["uv>=0.1.0"],
+    },
     entry_points={
         "console_scripts": [
             "repo2run=repo2run.main:main",

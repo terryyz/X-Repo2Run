@@ -24,8 +24,7 @@ def setup_logger(log_file=None, verbose=False):
     
     # Create formatter
     formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+        '%(message)s'
     )
     
     # Create console handler

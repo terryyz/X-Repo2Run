@@ -7,7 +7,7 @@ A robust tool to configure and run repositories with automated dependency manage
 - Clone repositories from GitHub or use local repositories
 - Extract dependencies from various sources (requirements.txt, setup.py, pyproject.toml, etc.)
 - Unify requirements from multiple sources
-- Install dependencies using UV (a fast Python package installer)
+- Install dependencies using either pip/venv (default) or UV (optional)
 - Find and run tests automatically
 - Generate detailed reports
 - Preserves original repository structure
@@ -30,11 +30,14 @@ pip install -e .
 #### Main Command
 
 ```bash
-# Using a GitHub repository
+# Using a GitHub repository (with default pip/venv)
 repo2run --repo username/repo commit-sha --output-dir ./output --verbose
 
-# Using a local repository
+# Using a local repository (with default pip/venv)
 repo2run --local /path/to/local/repo --output-dir ./output --verbose
+
+# Use UV for dependency management instead of pip/venv
+repo2run --local /path/to/local/repo --output-dir ./output --use-uv --verbose
 
 # Specify a custom workspace directory
 repo2run --local /path/to/local/repo --workspace-dir ./workspace --output-dir ./output
@@ -53,8 +56,11 @@ repo2run-extract --repo-path /path/to/repo --output requirements.json --json --v
 #### Install Package
 
 ```bash
-# Install a package using UV
+# Install a package using default pip/venv
 repo2run-install -p package_name -v "==1.0.0" --verbose
+
+# Install a package using UV
+repo2run-install -p package_name -v "==1.0.0" --use-uv --verbose
 ```
 
 #### Run Tests
@@ -81,15 +87,34 @@ extractor = DependencyExtractor(repo_path)
 requirements = extractor.extract_all_requirements()
 unified_requirements = extractor.unify_requirements(requirements)
 
-# Install dependencies
-installer = DependencyInstaller(repo_path)
+# Install dependencies using pip/venv (default)
+installer = DependencyInstaller(repo_path, use_uv=False)
 venv_path = installer.create_virtual_environment()
 installation_results = installer.install_requirements(unified_requirements, venv_path)
 
-# Run tests
-test_runner = TestRunner(repo_path, venv_path)
+# Run tests with pip/venv
+test_runner = TestRunner(repo_path, venv_path, use_uv=False)
 test_results = test_runner.run_tests()
+
+# Or use UV for dependency management
+# installer = DependencyInstaller(repo_path, use_uv=True)
+# test_runner = TestRunner(repo_path, venv_path, use_uv=True)
 ```
+
+## Dependency Management Systems
+
+Repo2Run supports two dependency management systems:
+
+1. **pip/venv (Default)**: Uses the standard Python venv module to create virtual environments and pip for package installation.
+   - More compatible with a wide range of repositories
+   - No additional dependencies required
+
+2. **UV (Optional)**: A fast Python package installer and resolver.
+   - Significantly faster installation
+   - Better dependency resolution in complex cases
+   - Can be enabled with the `--use-uv` flag
+
+You can choose the dependency system that works best for your use case.
 
 ## Directory Structure
 
