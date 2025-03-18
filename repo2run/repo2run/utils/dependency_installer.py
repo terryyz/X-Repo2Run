@@ -380,12 +380,61 @@ class DependencyInstaller:
                     
                     self.logger.info(f"Successfully installed {req}")
                 except subprocess.CalledProcessError as e:
-                    self.logger.warning(f"Failed to install {req}: {e.stderr}")
+                    error_msg = e.stderr
+                    self.logger.warning(f"Failed to install {req}: {error_msg}")
                     
+                    # Check if this is a version constraint error
+                    if "Could not find a version that satisfies the requirement" in error_msg:
+                        self.logger.info(f"Version constraint error for {req}, trying to find lowest available version")
+                        
+                        # Parse the available versions from the error message
+                        import re
+                        versions_match = re.search(r'from versions: ([^)]+)', error_msg)
+                        
+                        if versions_match:
+                            available_versions = versions_match.group(1).strip().split(', ')
+                            if available_versions:
+                                # Get package name without version
+                                package_name = req.split('==')[0] if '==' in req else req
+                                
+                                # Try to install the lowest available version
+                                lowest_version = available_versions[0]
+                                self.logger.info(f"Trying to install {package_name} with lowest available version: {lowest_version}")
+                                
+                                try:
+                                    cmd = [
+                                        str(pip_path),
+                                        'install',
+                                        f"{package_name}=={lowest_version}",
+                                        '--no-cache-dir'
+                                    ]
+                                    
+                                    self.logger.info(f"Running pip with command: {' '.join(cmd)}")
+                                    
+                                    result = subprocess.run(
+                                        cmd,
+                                        check=True,
+                                        capture_output=True,
+                                        text=True
+                                    )
+                                    
+                                    results.append({
+                                        'package': req,
+                                        'success': True,
+                                        'output': f"Installed {package_name}=={lowest_version} (original request: {req})",
+                                        'method': 'pip fallback to lowest version'
+                                    })
+                                    
+                                    self.logger.info(f"Successfully installed {package_name}=={lowest_version} as fallback for {req}")
+                                    continue
+                                except subprocess.CalledProcessError as fallback_error:
+                                    self.logger.warning(f"Failed to install lowest version for {req}: {fallback_error.stderr}")
+                    
+                    # If we get here, either it wasn't a version constraint error or the fallback failed
                     results.append({
                         'package': req,
                         'success': False,
-                        'error': e.stderr,
+                        'error': error_msg,
                         'method': 'pip individual'
                     })
         
