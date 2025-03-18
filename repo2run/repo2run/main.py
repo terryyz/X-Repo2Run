@@ -227,18 +227,22 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             repo_path = repo_manager.clone_repository(full_name, sha)
             repo_name = repo_path.name
             add_log_entry(f"Cloned repository {full_name} at {sha}", repo_name=repo_name)
-            # Update the repository identifier for GitHub repos - use a simpler format
+            # Update the repository field to the original input path (GitHub repo path with SHA)
+            result_data["repository"] = f"{full_name}@{sha}"
+            # Store the repo identifier for output directory name
             repo_identifier = f"{full_name.replace('/', '_')}_{sha[:7]}"  # Use shorter SHA
         else:
             local_path = Path(local_path).resolve()
             repo_path = repo_manager.setup_local_repository(local_path)
             repo_name = repo_path.name
             add_log_entry(f"Set up local repository from {local_path}", repo_name=repo_name)
-            # Update the repository identifier for local paths - use just the directory name to avoid long paths
+            # Update the repository field to the original input path
+            result_data["repository"] = str(local_path)
+            # Use repo name for the output directory
             repo_identifier = repo_name
         
-        # Update the repository identifier
-        result_data["repository"] = repo_identifier
+        # Store the repo_identifier separately for use in creating directories
+        result_data["repository_identifier"] = repo_identifier
         
         # Create a project directory in the output folder
         project_dir = output_dir / repo_identifier
