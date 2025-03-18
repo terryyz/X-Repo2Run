@@ -676,7 +676,13 @@ class TestRunner:
                 status = "skipped"
                 self.logger.warning("Setting status to 'skipped' because no actual test functions were found")
             elif tests_failed > 0:
-                status = "failure"
+                # Set status based on whether any tests passed
+                if tests_passed > 0:
+                    status = "partial_success"
+                    self.logger.info(f"Setting status to 'partial_success' because {tests_passed} tests passed and {tests_failed} tests failed")
+                else:
+                    status = "failure"
+                    self.logger.info(f"Setting status to 'failure' because all {tests_failed} tests failed")
             
             return {
                 "tests_found": tests_found,

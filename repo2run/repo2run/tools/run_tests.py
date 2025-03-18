@@ -227,7 +227,16 @@ def run_tests_with_uv(repo_path, logger):
                     })
                     skipped += 1
             
-            status = "success" if failed == 0 else "failure"
+            # Determine status based on test results
+            if failed == 0:
+                status = "success"
+            else:
+                # If some tests passed and some failed, use partial_success
+                if passed > 0:
+                    status = "partial_success"
+                else:
+                    status = "failure"
+            
             message = f"{passed} passed, {failed} failed, {skipped} skipped"
             
             logger.info(f"Test results: {message}")

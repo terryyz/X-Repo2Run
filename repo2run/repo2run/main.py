@@ -735,6 +735,10 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                 add_log_entry("Setting status to error due to test execution error")
                 result_data["status"] = "error"
                 status_explicitly_set = True
+            elif test_results.get("status") == "partial_success":
+                add_log_entry(f"Setting status to partial_success because {test_results['tests_passed']} tests passed and {test_results['tests_failed']} tests failed")
+                result_data["status"] = "partial_success"
+                status_explicitly_set = True
             elif test_results.get("status") == "failure":
                 add_log_entry("Setting status to failure due to failed tests")
                 result_data["status"] = "failure"
