@@ -331,20 +331,7 @@ class TestRunner:
         self.logger.info(f"Running command: {' '.join(command)}")
         
         # Get the path to the Python executable in the virtual environment
-        if sys.platform == 'win32':
-            python_path = self.venv_path / 'Scripts' / 'python.exe'
-        else:
-            python_path = self.venv_path / 'bin' / 'python'
-        
-        if not python_path.exists():
-            self.logger.error(f"Python executable not found in virtual environment at {python_path}")
-            return {
-                "success": False,
-                "error": f"Python executable not found in virtual environment at {python_path}",
-                "returncode": -1,
-                "stdout": "",
-                "stderr": f"Python executable not found in virtual environment at {python_path}"
-            }
+        python_path = self._get_python_path()
         
         if command[0] == "pytest":
             # If the command starts with pytest, use python -m pytest instead
@@ -379,190 +366,269 @@ class TestRunner:
                 "stderr": str(e)
             }
     
+    def _get_python_path(self):
+        """
+        Get the path to the Python executable in the virtual environment.
+        
+        Returns:
+            Path: Path to the Python executable.
+        """
+        if sys.platform == 'win32':
+            python_path = self.venv_path / 'Scripts' / 'python.exe'
+        else:
+            python_path = self.venv_path / 'bin' / 'python'
+        
+        # Always use absolute paths
+        python_path = python_path.absolute()
+        
+        if not python_path.exists():
+            self.logger.error(f"Python not found in virtual environment at {python_path}")
+            raise RuntimeError(f"Python not found in virtual environment at {python_path}")
+        
+        return python_path
+    
+    def _get_pytest_path(self):
+        """
+        Get the path to the pytest executable in the virtual environment.
+        
+        Returns:
+            Path: Path to the pytest executable.
+        """
+        if sys.platform == 'win32':
+            pytest_path = self.venv_path / 'Scripts' / 'pytest.exe'
+        else:
+            pytest_path = self.venv_path / 'bin' / 'pytest'
+        
+        # Always use absolute paths
+        pytest_path = pytest_path.absolute()
+        
+        if not pytest_path.exists():
+            self.logger.warning(f"pytest not found at {pytest_path}, falling back to using python -m pytest")
+            return None
+        
+        return pytest_path
+    
     def run_tests(self):
         """
-        Run tests using pytest.
+        Run tests in the repository.
         
         Returns:
             dict: Dictionary with test results.
         """
-        self.logger.info("Running tests using pytest")
+        self.logger.info(f"Running tests in {self.repo_path}")
         
-        # Find test files
-        test_files = self.find_tests()
-        
-        if not test_files:
-            self.logger.warning("No test files found")
+        # Check if the virtual environment exists
+        if not self.venv_path.exists():
+            self.logger.error(f"Virtual environment not found at {self.venv_path}")
             return {
-                "status": "success",
                 "tests_found": 0,
                 "tests_passed": 0,
                 "tests_failed": 0,
                 "tests_skipped": 0,
-                "test_results": []
+                "test_results": [],
+                "status": "error",
+                "error": f"Virtual environment not found at {self.venv_path}"
             }
         
-        # Find the best working directory
-        working_dir = self._find_best_working_dir()
+        # Get Python path using helper method
+        try:
+            python_path = self._get_python_path()
+        except Exception as e:
+            self.logger.error(f"Error getting Python path: {str(e)}")
+            return {
+                "tests_found": 0,
+                "tests_passed": 0,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+                "test_results": [],
+                "status": "error",
+                "error": f"Error getting Python path: {str(e)}"
+            }
         
-        # Make sure pytest is installed
-        if not self.check_pytest():
-            self.logger.info("pytest is not installed. Installing...")
-            if not self.install_pytest():
-                self.logger.error("Failed to install pytest")
-                return {
-                    "status": "error",
-                    "error": "Failed to install pytest",
-                    "tests_found": len(test_files),
-                    "tests_passed": 0,
-                    "tests_failed": len(test_files),
-                    "tests_skipped": 0,
-                    "test_results": []
-                }
+        # Find all test files
+        test_files = self.find_tests()
+        self.logger.info(f"Found {len(test_files)} test files")
+        
+        # If no test files found, return empty results
+        if not test_files:
+            self.logger.warning("No test files found")
+            return {
+                "tests_found": 0,
+                "tests_passed": 0,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+                "test_results": [],
+                "status": "success"
+            }
+        
+        # Try to get pytest path, but it's okay if it doesn't exist
+        pytest_path = self._get_pytest_path()
+        
+        # Choose the command based on whether pytest is installed
+        if pytest_path:
+            self.logger.info(f"Using pytest binary at {pytest_path}")
+            cmd = [
+                str(pytest_path),
+                '-v',
+                '--no-header'
+            ]
+        else:
+            self.logger.info("Using python -m pytest")
+            cmd = [
+                str(python_path),
+                '-m',
+                'pytest',
+                '-v',
+                '--no-header'
+            ]
+        
+        # Add all test files as arguments
+        for test_file in test_files:
+            cmd.append(str(test_file))
+        
+        # Run the tests
+        self.logger.info(f"Running command: {' '.join(cmd)}")
         
         try:
-            # Run pytest with JUnit XML output
-            self.logger.info("Running pytest with JUnit XML output")
+            result = subprocess.run(
+                cmd,
+                cwd=self.repo_path,
+                check=False,
+                capture_output=True,
+                text=True
+            )
             
-            # Create an output directory for test results
-            output_dir = self.repo_path / "test-results"
-            output_dir.mkdir(exist_ok=True)
+            # Parse test results
+            tests_found, tests_passed, tests_failed, tests_skipped, test_results = self._parse_test_results(result.stdout, result.stderr)
             
-            # Use JUnit XML output for detailed test results
-            xml_path = output_dir / "junit.xml"
-            
-            # Command to run pytest with JUnit XML output
-            command = [
-                "pytest",
-                "-v",
-                f"--junitxml={xml_path}",
-                "--color=yes"
-            ]
-            
-            result = self._run_in_venv(command, cwd=working_dir)
-            
-            if result["success"]:
-                self.logger.info("Tests passed")
-            else:
-                self.logger.warning(f"Tests failed with return code {result['returncode']}")
-            
-            # Parse the output to get test results
-            output = result.get("stdout", "")
-            
-            # Extract test summary
-            tests_found = 0
-            tests_passed = 0
-            tests_failed = 0
-            tests_skipped = 0
-            
-            # Try to parse the test summary using regex
-            summary_pattern = re.compile(r"=+\s*(\d+)\s+passed[,\s]+(\d+)\s+skipped[,\s]+(\d+)\s+failed")
-            for line in output.splitlines():
-                summary_match = summary_pattern.search(line)
-                if summary_match:
-                    tests_passed = int(summary_match.group(1))
-                    tests_skipped = int(summary_match.group(2))
-                    tests_failed = int(summary_match.group(3))
-                    tests_found = tests_passed + tests_skipped + tests_failed
-                    break
-            
-            # If we couldn't parse the summary, try to count the tests
-            if tests_found == 0:
-                # Collect tests to get count
-                collected = self.collect_tests()
-                if collected["success"]:
-                    tests_found = len(collected["tests"])
-                else:
-                    # If test collection failed, use number of test files instead
-                    tests_found = len(test_files)
-                
-                if "error" in result:
-                    # All tests failed if there was an error
-                    tests_failed = tests_found
-                elif "no tests ran" in output.lower():
-                    # No tests ran
-                    tests_skipped = tests_found
-                
-            # Parse individual test results
-            test_results = []
-            failure_pattern = re.compile(r"(FAILED|ERROR)\s+(.+?)::(.+?)\s+-")
-            failure_messages = {}
-            
-            # Extract failure messages
-            current_test = None
-            capturing_message = False
-            message_lines = []
-            
-            for line in output.splitlines():
-                # Check if this line starts a new failure
-                failure_match = failure_pattern.search(line)
-                if failure_match:
-                    # If we were capturing a message, save it
-                    if current_test and capturing_message:
-                        failure_messages[current_test] = "\n".join(message_lines)
-                        message_lines = []
-                    
-                    current_test = f"{failure_match.group(2)}::{failure_match.group(3)}"
-                    capturing_message = True
-                    continue
-                
-                # Check if this line is part of a failure message
-                if capturing_message:
-                    if line.strip() and not line.startswith("=") and not line.startswith("_"):
-                        message_lines.append(line.strip())
-                    elif line.startswith("=") and "short test summary info" in line.lower():
-                        # End of failure message
-                        failure_messages[current_test] = "\n".join(message_lines)
-                        capturing_message = False
-            
-            # Save the last failure message if we were capturing one
-            if current_test and capturing_message:
-                failure_messages[current_test] = "\n".join(message_lines)
-            
-            # Create test results
-            for test_file in test_files:
-                test_name = test_file.relative_to(self.repo_path)
-                
-                # Check if this test file had failures
-                test_failed = False
-                failure_message = ""
-                
-                for key, message in failure_messages.items():
-                    if str(test_name) in key:
-                        test_failed = True
-                        failure_message = message
-                        break
-                
-                if test_failed:
-                    test_results.append({
-                        "name": str(test_name),
-                        "status": "failure",
-                        "message": failure_message
-                    })
-                else:
-                    test_results.append({
-                        "name": str(test_name),
-                        "status": "success",
-                        "message": ""
-                    })
+            self.logger.info(f"Tests found: {tests_found}, passed: {tests_passed}, failed: {tests_failed}, skipped: {tests_skipped}")
             
             return {
-                "status": "success" if tests_failed == 0 else "failure",
                 "tests_found": tests_found,
                 "tests_passed": tests_passed,
                 "tests_failed": tests_failed,
                 "tests_skipped": tests_skipped,
-                "test_results": test_results
+                "test_results": test_results,
+                "status": "success"
             }
-            
         except Exception as e:
             self.logger.error(f"Error running tests: {str(e)}")
             return {
-                "status": "error",
-                "error": str(e),
-                "tests_found": len(test_files),
+                "tests_found": 0,
                 "tests_passed": 0,
-                "tests_failed": len(test_files),
+                "tests_failed": 0,
                 "tests_skipped": 0,
-                "test_results": []
-            } 
+                "test_results": [],
+                "status": "error",
+                "error": str(e)
+            }
+    
+    def _parse_test_results(self, stdout, stderr):
+        """
+        Parse test results from stdout and stderr.
+        
+        Args:
+            stdout (str): Standard output from the test command.
+            stderr (str): Standard error output from the test command.
+        
+        Returns:
+            tuple: Tuple containing tests_found, tests_passed, tests_failed, tests_skipped, and test_results.
+        """
+        # Extract test summary
+        tests_found = 0
+        tests_passed = 0
+        tests_failed = 0
+        tests_skipped = 0
+        
+        # Try to parse the test summary using regex
+        summary_pattern = re.compile(r"=+\s*(\d+)\s+passed[,\s]+(\d+)\s+skipped[,\s]+(\d+)\s+failed")
+        for line in stdout.splitlines():
+            summary_match = summary_pattern.search(line)
+            if summary_match:
+                tests_passed = int(summary_match.group(1))
+                tests_skipped = int(summary_match.group(2))
+                tests_failed = int(summary_match.group(3))
+                tests_found = tests_passed + tests_skipped + tests_failed
+                break
+        
+        # If we couldn't parse the summary, try to count the tests
+        if tests_found == 0:
+            # Collect tests to get count
+            collected = self.collect_tests()
+            if collected["success"]:
+                tests_found = len(collected["tests"])
+            else:
+                # If test collection failed, use number of test files instead
+                tests_found = len(test_files)
+            
+            if "error" in result:
+                # All tests failed if there was an error
+                tests_failed = tests_found
+            elif "no tests ran" in stdout.lower():
+                # No tests ran
+                tests_skipped = tests_found
+            
+        # Parse individual test results
+        test_results = []
+        failure_pattern = re.compile(r"(FAILED|ERROR)\s+(.+?)::(.+?)\s+-")
+        failure_messages = {}
+        
+        # Extract failure messages
+        current_test = None
+        capturing_message = False
+        message_lines = []
+        
+        for line in stdout.splitlines():
+            # Check if this line starts a new failure
+            failure_match = failure_pattern.search(line)
+            if failure_match:
+                # If we were capturing a message, save it
+                if current_test and capturing_message:
+                    failure_messages[current_test] = "\n".join(message_lines)
+                    message_lines = []
+                
+                current_test = f"{failure_match.group(2)}::{failure_match.group(3)}"
+                capturing_message = True
+                continue
+            
+            # Check if this line is part of a failure message
+            if capturing_message:
+                if line.strip() and not line.startswith("=") and not line.startswith("_"):
+                    message_lines.append(line.strip())
+                elif line.startswith("=") and "short test summary info" in line.lower():
+                    # End of failure message
+                    failure_messages[current_test] = "\n".join(message_lines)
+                    capturing_message = False
+        
+        # Save the last failure message if we were capturing one
+        if current_test and capturing_message:
+            failure_messages[current_test] = "\n".join(message_lines)
+        
+        # Create test results
+        for test_file in test_files:
+            test_name = test_file.relative_to(self.repo_path)
+            
+            # Check if this test file had failures
+            test_failed = False
+            failure_message = ""
+            
+            for key, message in failure_messages.items():
+                if str(test_name) in key:
+                    test_failed = True
+                    failure_message = message
+                    break
+            
+            if test_failed:
+                test_results.append({
+                    "name": str(test_name),
+                    "status": "failure",
+                    "message": failure_message
+                })
+            else:
+                test_results.append({
+                    "name": str(test_name),
+                    "status": "success",
+                    "message": ""
+                })
+        
+        return tests_found, tests_passed, tests_failed, tests_skipped, test_results 

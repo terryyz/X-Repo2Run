@@ -451,7 +451,12 @@ class DependencyInstaller:
             
             self.logger.info(f"Running pip with command: {' '.join(cmd)}")
             
-            subprocess.run(
+            # Make sure pip_path is absolute
+            if not os.path.isabs(str(pip_path)):
+                pip_path = pip_path.absolute()
+                self.logger.info(f"Using absolute pip path: {pip_path}")
+            
+            result = subprocess.run(
                 cmd,
                 check=True,
                 capture_output=True,
@@ -461,6 +466,10 @@ class DependencyInstaller:
             self.logger.info("Successfully installed pytest")
         except subprocess.CalledProcessError as e:
             self.logger.warning(f"Failed to install pytest: {e.stderr}")
+        except FileNotFoundError as e:
+            self.logger.error(f"Failed to install pytest: {str(e)}")
+            self.logger.error(f"Current directory: {os.getcwd()}")
+            self.logger.error(f"Pip path: {pip_path}, exists: {pip_path.exists()}")
         
         self.logger.info(f"Installed {sum(1 for r in results if r['success'])} out of {len(requirements)} requirements")
         return results 

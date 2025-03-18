@@ -234,6 +234,14 @@ def main():
         pyproject_path = project_dir / "pyproject.toml"
         venv_path = project_dir / '.venv'
         
+        # Convert to absolute paths to ensure consistency
+        requirements_in_path = requirements_in_path.absolute()
+        compiled_requirements_path = compiled_requirements_path.absolute()
+        pyproject_path = pyproject_path.absolute()
+        venv_path = venv_path.absolute()
+        
+        add_log_entry(f"Using absolute paths: venv_path={venv_path}")
+        
         # Create a requirements.in file
         with open(requirements_in_path, 'w') as f:
             f.write('\n'.join(unified_requirements))
@@ -356,6 +364,46 @@ def main():
                 venv.create(venv_path, with_pip=True)
                 add_log_entry(f"Virtual environment created at {venv_path}")
                 
+                # Upgrade pip to the latest version
+                add_log_entry("Upgrading pip to the latest version")
+                
+                # Get the path to the pip executable in the virtual environment
+                if sys.platform == 'win32':
+                    pip_path = venv_path / 'Scripts' / 'pip.exe'
+                else:
+                    pip_path = venv_path / 'bin' / 'pip'
+                
+                # Ensure pip_path is absolute
+                pip_path = pip_path.absolute()
+                
+                if pip_path.exists():
+                    try:
+                        upgrade_cmd = [
+                            str(pip_path),
+                            'install',
+                            '--upgrade',
+                            'pip'
+                        ]
+                        
+                        add_log_entry(f"Running pip with command: {' '.join(upgrade_cmd)}")
+                        
+                        result = subprocess.run(
+                            upgrade_cmd,
+                            check=True,
+                            capture_output=True,
+                            text=True
+                        )
+                        
+                        add_log_entry(f"Successfully upgraded pip: {result.stdout.strip()}")
+                    except subprocess.CalledProcessError as e:
+                        add_log_entry(f"Failed to upgrade pip: {e.stderr}", level="WARNING")
+                        add_log_entry("Continuing with existing pip version", level="WARNING")
+                    except Exception as e:
+                        add_log_entry(f"Error upgrading pip: {str(e)}", level="WARNING")
+                        add_log_entry("Continuing with existing pip version", level="WARNING")
+                else:
+                    add_log_entry(f"pip not found at {pip_path}, skipping upgrade", level="WARNING")
+                
             except Exception as e:
                 add_log_entry(f"Failed to initialize project with venv: {str(e)}", level="ERROR")
                 result_data["status"] = "error"
@@ -368,6 +416,37 @@ def main():
         # Install dependencies
         dependency_installer = DependencyInstaller(project_dir, use_uv=args.use_uv, logger=logger)
         add_log_entry(f"Installing {len(unified_requirements)} requirements using {'UV' if args.use_uv else 'pip'}")
+        add_log_entry(f"Virtual environment path: {venv_path}, exists: {venv_path.exists()}")
+        
+        # Check if pip exists in the virtual environment
+        if not args.use_uv:
+            if sys.platform == 'win32':
+                pip_path = venv_path / 'Scripts' / 'pip.exe'
+            else:
+                pip_path = venv_path / 'bin' / 'pip'
+            
+            add_log_entry(f"Checking pip path: {pip_path}, exists: {pip_path.exists()}")
+            
+            if not pip_path.exists():
+                add_log_entry(f"pip not found at {pip_path}, trying to install it", level="WARNING")
+                try:
+                    python_path = venv_path / 'bin' / 'python' if not sys.platform == 'win32' else venv_path / 'Scripts' / 'python.exe'
+                    
+                    if python_path.exists():
+                        add_log_entry(f"Python found at {python_path}, using it to install pip")
+                        subprocess.run(
+                            [str(python_path), '-m', 'ensurepip', '--upgrade'],
+                            check=True,
+                            capture_output=True,
+                            text=True
+                        )
+                        add_log_entry("Successfully installed pip using ensurepip")
+                    else:
+                        add_log_entry(f"Python not found at {python_path}", level="ERROR")
+                except Exception as e:
+                    add_log_entry(f"Failed to install pip: {str(e)}", level="ERROR")
+        
+        # Now install requirements
         installation_results = dependency_installer.install_requirements(unified_requirements, venv_path)
         
         # Store installation results in the result data
