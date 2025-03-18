@@ -44,6 +44,7 @@ import datetime
 import multiprocessing
 from pathlib import Path
 from typing import List, Tuple, Optional
+from tqdm import tqdm
 
 from repo2run.utils.repo_manager import RepoManager
 from repo2run.utils.dependency_extractor import DependencyExtractor
@@ -915,11 +916,16 @@ def process_repo_list(args: argparse.Namespace) -> int:
     
     # Create a pool of worker processes
     with multiprocessing.Pool(processes=args.num_workers) as pool:
-        # Process repositories in parallel
-        results = pool.starmap(
-            process_single_repo,
-            [(args, repo_info, None) for repo_info in repo_infos]
-        )
+        # Process repositories in parallel with progress bar
+        results = list(tqdm(
+            pool.imap(
+                lambda x: process_single_repo(args, x, None),
+                repo_infos
+            ),
+            total=len(repo_infos),
+            desc="Processing repositories",
+            unit="repo"
+        ))
     
     # Check if any process failed
     return 1 if any(result != 0 for result in results) else 0
@@ -951,11 +957,16 @@ def process_local_list(args: argparse.Namespace) -> int:
     
     # Create a pool of worker processes
     with multiprocessing.Pool(processes=args.num_workers) as pool:
-        # Process directories in parallel
-        results = pool.starmap(
-            process_single_repo,
-            [(args, None, dir_path) for dir_path in dir_paths]
-        )
+        # Process directories in parallel with progress bar
+        results = list(tqdm(
+            pool.imap(
+                lambda x: process_single_repo(args, None, x),
+                dir_paths
+            ),
+            total=len(dir_paths),
+            desc="Processing directories",
+            unit="dir"
+        ))
     
     # Check if any process failed
     return 1 if any(result != 0 for result in results) else 0
