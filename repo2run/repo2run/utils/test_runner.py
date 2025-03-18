@@ -547,6 +547,68 @@ class TestRunner:
             # Try again to get pytest path after installation
             pytest_path = self._get_pytest_path()
         
+        # First, run with --collect-only to see if there are actual test methods
+        self.logger.info("Running pytest in collect-only mode to check for actual test methods")
+        
+        collect_cmd = []
+        if pytest_path:
+            collect_cmd = [str(pytest_path), '--collect-only', '-v']
+        else:
+            collect_cmd = [str(python_path), '-m', 'pytest', '--collect-only', '-v']
+        
+        # Run pytest in collect-only mode
+        current_dir = os.getcwd()
+        try:
+            os.chdir(self.repo_path)
+            
+            # Convert test files to paths relative to repo_path
+            relative_test_files = []
+            for test_file in test_files:
+                try:
+                    relative_path = test_file.relative_to(self.repo_path)
+                    relative_test_files.append(str(relative_path))
+                except ValueError:
+                    relative_test_files.append(str(test_file))
+            
+            collect_cmd.extend(relative_test_files)
+            self.logger.info(f"Running collect-only command: {' '.join(collect_cmd)}")
+            
+            collect_result = subprocess.run(
+                collect_cmd,
+                check=False,
+                capture_output=True,
+                text=True
+            )
+            
+            # Check if any test functions were found
+            no_tests_found = "collected 0 items" in collect_result.stdout
+            if no_tests_found:
+                self.logger.warning("No actual test functions found in the test files")
+                self.logger.warning("Pytest collection output: " + collect_result.stdout[:500])  # Log a part of the output
+                
+                # Return early with appropriate status
+                return {
+                    "tests_found": len(test_files),
+                    "tests_passed": 0,
+                    "tests_failed": 0,
+                    "tests_skipped": len(test_files),
+                    "test_results": [
+                        {
+                            "name": str(f.relative_to(self.repo_path)),
+                            "status": "skipped",
+                            "message": "No test functions found in this file"
+                        } for f in test_files
+                    ],
+                    "status": "skipped",
+                    "warning": "Files found with test-like names, but no pytest test functions detected",
+                    "collect_stdout": collect_result.stdout,
+                    "collect_stderr": collect_result.stderr
+                }
+        except Exception as e:
+            self.logger.error(f"Error during test collection: {str(e)}")
+        finally:
+            os.chdir(current_dir)
+        
         # Choose the command based on whether pytest is installed
         if pytest_path:
             self.logger.info(f"Using pytest binary at {pytest_path}")
@@ -594,18 +656,36 @@ class TestRunner:
                 text=True
             )
             
+            # Log more details about the test run output
+            if "collected 0 items" in result.stdout:
+                self.logger.warning("Pytest reported 'collected 0 items' - no actual tests were run")
+            
+            # Store raw output for debugging
+            test_output = {
+                "stdout": result.stdout,
+                "stderr": result.stderr
+            }
+            
             # Parse test results
             tests_found, tests_passed, tests_failed, tests_skipped, test_results = self._parse_test_results(result.stdout, result.stderr)
             
             self.logger.info(f"Tests found: {tests_found}, passed: {tests_passed}, failed: {tests_failed}, skipped: {tests_skipped}")
             
+            status = "success"
+            if "collected 0 items" in result.stdout:
+                status = "skipped"
+                self.logger.warning("Setting status to 'skipped' because no actual test functions were found")
+            elif tests_failed > 0:
+                status = "error"
+                
             return {
                 "tests_found": tests_found,
                 "tests_passed": tests_passed,
                 "tests_failed": tests_failed,
                 "tests_skipped": tests_skipped,
                 "test_results": test_results,
-                "status": "success"
+                "status": status,
+                "test_output": test_output
             }
         except Exception as e:
             self.logger.error(f"Error running tests: {str(e)}")
