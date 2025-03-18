@@ -885,6 +885,32 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         return 1
 
 
+def _process_repo_wrapper(args_and_repo):
+    """Helper function to process a single repository in multiprocessing.
+    
+    Args:
+        args_and_repo (tuple): Tuple containing (args, repo_info)
+        
+    Returns:
+        int: Exit code from process_single_repo
+    """
+    args, repo_info = args_and_repo
+    return process_single_repo(args, repo_info, None)
+
+
+def _process_local_wrapper(args_and_path):
+    """Helper function to process a single local directory in multiprocessing.
+    
+    Args:
+        args_and_path (tuple): Tuple containing (args, local_path)
+        
+    Returns:
+        int: Exit code from process_single_repo
+    """
+    args, local_path = args_and_path
+    return process_single_repo(args, None, local_path)
+
+
 def process_repo_list(args: argparse.Namespace) -> int:
     """Process a list of repositories in parallel.
     
@@ -914,14 +940,14 @@ def process_repo_list(args: argparse.Namespace) -> int:
         print("No valid repositories found in the list")
         return 1
     
+    # Create argument tuples for the wrapper function
+    arg_tuples = [(args, repo_info) for repo_info in repo_infos]
+    
     # Create a pool of worker processes
     with multiprocessing.Pool(processes=args.num_workers) as pool:
         # Process repositories in parallel with progress bar
         results = list(tqdm(
-            pool.imap(
-                lambda x: process_single_repo(args, x, None),
-                repo_infos
-            ),
+            pool.imap(_process_repo_wrapper, arg_tuples),
             total=len(repo_infos),
             desc="Processing repositories",
             unit="repo"
@@ -955,14 +981,14 @@ def process_local_list(args: argparse.Namespace) -> int:
         print("No valid directories found in the list")
         return 1
     
+    # Create argument tuples for the wrapper function
+    arg_tuples = [(args, dir_path) for dir_path in dir_paths]
+    
     # Create a pool of worker processes
     with multiprocessing.Pool(processes=args.num_workers) as pool:
         # Process directories in parallel with progress bar
         results = list(tqdm(
-            pool.imap(
-                lambda x: process_single_repo(args, None, x),
-                dir_paths
-            ),
+            pool.imap(_process_local_wrapper, arg_tuples),
             total=len(dir_paths),
             desc="Processing directories",
             unit="dir"
