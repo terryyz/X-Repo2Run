@@ -263,6 +263,60 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         add_log_entry(f"Created project directory at {project_dir}")
         result_data["project_directory"] = str(project_dir)
         
+        # Copy the entire repository to the project directory
+        add_log_entry(f"Copying repository from {repo_path} to {project_dir}")
+        try:
+            # Ensure the project directory exists
+            project_dir.mkdir(parents=True, exist_ok=True)
+            
+            # List all items in the source repository
+            source_items = list(os.listdir(repo_path))
+            add_log_entry(f"Found {len(source_items)} items to copy: {source_items}")
+            
+            for item in source_items:
+                src = repo_path / item
+                dst = project_dir / item
+                
+                # Log each item being copied
+                add_log_entry(f"Copying {src} to {dst}")
+                
+                try:
+                    # Remove existing destination if it exists
+                    if dst.exists():
+                        if dst.is_dir():
+                            shutil.rmtree(dst)
+                        else:
+                            dst.unlink()
+                    
+                    # Copy item
+                    if src.is_dir():
+                        shutil.copytree(src, dst)
+                    else:
+                        shutil.copy2(src, dst)
+                    
+                    add_log_entry(f"Successfully copied {item}")
+                
+                except Exception as copy_error:
+                    add_log_entry(f"Error copying {item}: {copy_error}", level="WARNING")
+            
+            # Verify copy
+            copied_items = list(os.listdir(project_dir))
+            add_log_entry(f"Copied {len(copied_items)} items to project directory: {copied_items}")
+            
+            # Update repo_path to point to the new location in the output directory
+            repo_path = project_dir
+        
+        except Exception as e:
+            add_log_entry(f"Critical error during repository copy: {e}", level="ERROR")
+            result_data["status"] = "error"
+            result_data["error"] = f"Failed to copy repository: {e}"
+            
+            # Write the result to results.jsonl
+            with open(results_jsonl_path, "a") as f:
+                f.write(json.dumps(result_data) + "\n")
+            
+            raise RuntimeError(f"Failed to copy repository: {e}")
+        
         # Extract dependencies
         dependency_extractor = DependencyExtractor(repo_path, logger=logger)
         requirements = dependency_extractor.extract_all_requirements()
