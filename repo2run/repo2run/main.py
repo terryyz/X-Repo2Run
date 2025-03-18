@@ -42,6 +42,7 @@ import sys
 import time
 import datetime
 import multiprocessing
+import logging
 from pathlib import Path
 from typing import List, Tuple, Optional
 from tqdm import tqdm
@@ -51,6 +52,27 @@ from repo2run.utils.dependency_extractor import DependencyExtractor
 from repo2run.utils.dependency_installer import DependencyInstaller
 from repo2run.utils.test_runner import TestRunner
 from repo2run.utils.logger import setup_logger
+
+
+def _configure_process_logging(verbose: bool):
+    """Configure logging for a worker process.
+    
+    Args:
+        verbose (bool): Whether to enable verbose logging
+    """
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO if verbose else logging.WARNING)
+    
+    # Remove any existing handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # Add a new handler that only shows logs if verbose is True
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.INFO if verbose else logging.WARNING)
+    formatter = logging.Formatter('%(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 
 def parse_arguments():
@@ -148,6 +170,9 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
     """
     start_time = time.time()
     temp_dir = None
+    
+    # Configure logging for this process
+    _configure_process_logging(args.verbose)
     
     # Setup logging
     logger = setup_logger(verbose=args.verbose)
@@ -895,6 +920,7 @@ def _process_repo_wrapper(args_and_repo):
         int: Exit code from process_single_repo
     """
     args, repo_info = args_and_repo
+    _configure_process_logging(args.verbose)
     return process_single_repo(args, repo_info, None)
 
 
@@ -908,6 +934,7 @@ def _process_local_wrapper(args_and_path):
         int: Exit code from process_single_repo
     """
     args, local_path = args_and_path
+    _configure_process_logging(args.verbose)
     return process_single_repo(args, None, local_path)
 
 
@@ -920,6 +947,9 @@ def process_repo_list(args: argparse.Namespace) -> int:
     Returns:
         int: Exit code (0 for success, 1 for failure)
     """
+    # Configure logging for the main process
+    _configure_process_logging(args.verbose)
+    
     # Read the repository list file
     with open(args.repo_list, 'r') as f:
         repo_lines = f.readlines()
@@ -950,7 +980,8 @@ def process_repo_list(args: argparse.Namespace) -> int:
             pool.imap(_process_repo_wrapper, arg_tuples),
             total=len(repo_infos),
             desc="Processing repositories",
-            unit="repo"
+            unit="repo",
+            disable=None  # This will show the progress bar even when not verbose
         ))
     
     # Check if any process failed
@@ -966,6 +997,9 @@ def process_local_list(args: argparse.Namespace) -> int:
     Returns:
         int: Exit code (0 for success, 1 for failure)
     """
+    # Configure logging for the main process
+    _configure_process_logging(args.verbose)
+    
     # Read the local directory list file
     with open(args.local_list, 'r') as f:
         dir_lines = f.readlines()
@@ -991,7 +1025,8 @@ def process_local_list(args: argparse.Namespace) -> int:
             pool.imap(_process_local_wrapper, arg_tuples),
             total=len(dir_paths),
             desc="Processing directories",
-            unit="dir"
+            unit="dir",
+            disable=None  # This will show the progress bar even when not verbose
         ))
     
     # Check if any process failed
