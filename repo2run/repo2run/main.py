@@ -151,9 +151,11 @@ def main():
             "start_time": start_time,
             "elapsed_time": 0
         },
-        "logs": [],
-        "log_messages": []  # Simple list of log messages without timestamp and level
+        "logs": []
     }
+    
+    # Original log entries (with timestamp and level)
+    full_logs = []
     
     # Function to add log entries to the result data
     def add_log_entry(message, level="INFO", **kwargs):
@@ -164,8 +166,8 @@ def main():
             "message": message,
             **kwargs
         }
-        result_data["logs"].append(log_entry)
-        result_data["log_messages"].append(message)  # Add just the message to log_messages list
+        full_logs.append(log_entry)  # Store the full log object
+        result_data["logs"].append(message)  # Only store the message string
         
         # Also log to regular logger with simplified format
         if level == "INFO":
@@ -532,6 +534,11 @@ def main():
         # Write the final result to results.jsonl
         with open(results_jsonl_path, "a") as f:
             f.write(json.dumps(result_data) + "\n")
+        
+        # Optionally save the full logs with timestamps and levels to a separate file
+        # full_logs_path = output_dir / "full_logs.jsonl"
+        # with open(full_logs_path, "a") as f:
+        #     f.write(json.dumps({"repository": repo_identifier, "full_logs": full_logs}) + "\n")
         
         add_log_entry(f"Results written to {results_jsonl_path}")
         
