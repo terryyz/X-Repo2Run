@@ -543,15 +543,7 @@ class TestRunner:
             self.logger.info("pytest not found, attempting to install it")
             if not self.install_pytest():
                 self.logger.error("Failed to install pytest, cannot run tests")
-                return {
-                    "tests_found": len(test_files),
-                    "tests_passed": 0,
-                    "tests_failed": len(test_files),
-                    "tests_skipped": 0,
-                    "test_results": [{"name": str(f.relative_to(self.repo_path)), "status": "error", "message": "Failed to install pytest"} for f in test_files],
-                    "status": "error",
-                    "error": "Failed to install pytest"
-                }
+                raise RuntimeError("Failed to install pytest, cannot run tests")
             # Try again to get pytest path after installation
             pytest_path = self._get_pytest_path()
         

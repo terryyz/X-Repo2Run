@@ -27,47 +27,83 @@ pip install -e .
 
 ### Command Line Interface
 
-#### Main Command
+#### Comprehensive Usage Options
 
 ```bash
-# Using a GitHub repository (with default pip/venv)
+# Basic repository processing
+repo2run --repo username/repo commit-sha [OPTIONS]
+repo2run --local /path/to/local/repo [OPTIONS]
+
+# Batch processing
+repo2run --repo-list repos.txt [OPTIONS]
+repo2run --local-list dirs.txt [OPTIONS]
+```
+
+#### Argument Reference
+
+| Argument | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `--repo FULL_NAME SHA` | Process a specific GitHub repository | None | `--repo octocat/Hello-World abc123` |
+| `--local PATH` | Process a local repository | None | `--local /home/user/projects/myrepo` |
+| `--repo-list FILE` | Process multiple repositories from a list file | None | `--repo-list repos.txt` |
+| `--local-list FILE` | Process multiple local repositories from a list file | None | `--local-list local_repos.txt` |
+| `--output-dir DIR` | Directory to store output files | `output` | `--output-dir ./results` |
+| `--workspace-dir DIR` | Directory to use as workspace | Temporary directory | `--workspace-dir ./workspace` |
+| `--timeout SECONDS` | Maximum execution time | 7200 (2 hours) | `--timeout 3600` |
+| `--verbose` | Enable detailed logging | Disabled | `--verbose` |
+| `--overwrite` | Overwrite existing output directory | Disabled | `--overwrite` |
+| `--use-uv` | Use UV for dependency management | Disabled (uses pip/venv) | `--use-uv` |
+| `--num-workers N` | Number of parallel processing workers | Number of CPU cores | `--num-workers 4` |
+| `--collect-only` | Only collect test cases without running | Disabled | `--collect-only` |
+
+#### Detailed Usage Examples
+
+```bash
+# 1. Process a GitHub repository with verbose logging
 repo2run --repo username/repo commit-sha --output-dir ./output --verbose
 
-# Using a local repository (with default pip/venv)
-repo2run --local /path/to/local/repo --output-dir ./output --verbose
+# 2. Process a local repository using UV for dependency management
+repo2run --local /path/to/local/repo --output-dir ./output --use-uv
 
-# Use UV for dependency management instead of pip/venv
-repo2run --local /path/to/local/repo --output-dir ./output --use-uv --verbose
+# 3. Process multiple repositories in parallel
+repo2run --repo-list repos.txt --output-dir ./output --num-workers 4
 
-# Specify a custom workspace directory
-repo2run --local /path/to/local/repo --workspace-dir ./workspace --output-dir ./output
+# 4. Process local repositories with a custom workspace
+repo2run --local-list local_repos.txt --workspace-dir ./custom_workspace --output-dir ./output
+
+# 5. Collect test cases without running tests or installing dependencies
+repo2run --repo username/repo commit-sha --output-dir ./output --collect-only
+
+# 6. Set a custom timeout and overwrite existing output
+repo2run --local /path/to/local/repo --output-dir ./output --timeout 1800 --overwrite
 ```
 
-#### Extract Requirements
+#### Repository List File Format
 
-```bash
-# Extract requirements from a repository
-repo2run-extract --repo-path /path/to/repo --output requirements.txt --verbose
+For `--repo-list` and `--local-list`, use the following format:
 
-# Extract requirements in JSON format
-repo2run-extract --repo-path /path/to/repo --output requirements.json --json --verbose
+```
+# repos.txt or local_repos.txt
+# Format: repository_identifier commit_sha
+octocat/Hello-World abc123
+another/repo def456
+# Lines starting with # are comments
 ```
 
-#### Install Package
+### Advanced Use Cases
+
+#### Continuous Integration
 
 ```bash
-# Install a package using default pip/venv
-repo2run-install -p package_name -v "==1.0.0" --verbose
-
-# Install a package using UV
-repo2run-install -p package_name -v "==1.0.0" --use-uv --verbose
+# In a CI pipeline, you might want to use verbose logging and collect test cases
+repo2run --repo username/repo $CI_COMMIT_SHA --output-dir ./ci_results --verbose --collect-only
 ```
 
-#### Run Tests
+#### Performance Testing
 
 ```bash
-# Run tests in a repository
-repo2run-test --repo-path /path/to/repo --output test_results.json --verbose
+# Process multiple repositories with UV and parallel workers
+repo2run --repo-list performance_repos.txt --use-uv --num-workers 8 --output-dir ./perf_results
 ```
 
 ### Python API

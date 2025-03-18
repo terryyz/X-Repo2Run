@@ -30,6 +30,7 @@ Options:
     --overwrite           Overwrite existing output directory if it exists
     --use-uv             Use UV for dependency management (default: False, use pip/venv)
     --num-workers N       Number of worker processes for parallel processing (default: number of CPU cores)
+    --collect-only      Only collect test cases without installing dependencies or running tests
 """
 
 import argparse
@@ -123,6 +124,11 @@ def parse_arguments():
         type=int,
         default=multiprocessing.cpu_count(),
         help='Number of worker processes for parallel processing (default: number of CPU cores)'
+    )
+    parser.add_argument(
+        '--collect-only',
+        action='store_true',
+        help='Only collect test cases without installing dependencies or running tests'
     )
     
     return parser.parse_args()
@@ -526,6 +532,58 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         # Store installation results in the result data
         result_data["installation_results"] = installation_results
         result_data["dependencies"]["installed"] = sum(1 for r in installation_results if r["success"])
+        
+        # Check if all dependencies were successfully installed
+        if result_data["dependencies"]["installed"] < len(unified_requirements):
+            add_log_entry(f"Failed to install all dependencies. Installed {result_data['dependencies']['installed']} out of {len(unified_requirements)} requirements", level="ERROR")
+            result_data["status"] = "failure"
+            result_data["error"] = "Not all dependencies could be installed"
+            
+            # Write the result to results.jsonl
+            with open(results_jsonl_path, "a") as f:
+                f.write(json.dumps(result_data) + "\n")
+            
+            return 1
+        
+        # If collect-only mode is enabled, only collect tests without running them
+        if args.collect_only:
+            add_log_entry("Running in collect-only mode", level="INFO")
+            
+            # Run test collection
+            test_runner = TestRunner(project_dir, venv_path=venv_path, use_uv=args.use_uv, logger=logger)
+            
+            # Collect tests
+            try:
+                test_collection = test_runner.collect_tests()
+                
+                # Always set status to failure in collect-only mode
+                result_data["status"] = "failure"
+                result_data["tests"] = {
+                    "found": len(test_collection.get("tests", [])),
+                    "passed": 0,
+                    "failed": 0,
+                    "skipped": 0,
+                    "details": []
+                }
+                result_data["test_collection"] = test_collection
+                
+                # Write the result to results.jsonl
+                with open(results_jsonl_path, "a") as f:
+                    f.write(json.dumps(result_data) + "\n")
+                
+                add_log_entry(f"Collected {len(test_collection.get('tests', []))} test cases", level="INFO")
+                
+                return 1  # Return failure status as requested
+            except Exception as e:
+                add_log_entry(f"Error collecting tests: {str(e)}", level="ERROR")
+                result_data["status"] = "failure"
+                result_data["error"] = str(e)
+                
+                # Write the result to results.jsonl
+                with open(results_jsonl_path, "a") as f:
+                    f.write(json.dumps(result_data) + "\n")
+                
+                return 1
         
         # Run tests
         # Copy necessary files from the original repo to the project directory for testing

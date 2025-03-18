@@ -175,6 +175,9 @@ class DependencyInstaller:
         
         Returns:
             list: List of dictionaries with installation results.
+        
+        Raises:
+            RuntimeError: If any requirement fails to install.
         """
         if venv_path is None:
             venv_path = self.repo_path / '.venv'
@@ -200,6 +203,9 @@ class DependencyInstaller:
         
         Returns:
             list: List of dictionaries with installation results.
+        
+        Raises:
+            RuntimeError: If any requirement fails to install.
         """
         if not self.check_uv_installed():
             raise RuntimeError("UV is required to install requirements but is not installed")
@@ -207,6 +213,7 @@ class DependencyInstaller:
         self.logger.info(f"Installing {len(requirements)} requirements using UV")
         
         results = []
+        failed_requirements = []
         
         for req in requirements:
             try:
@@ -245,10 +252,17 @@ class DependencyInstaller:
                     'error': e.stderr,
                     'method': 'uv'
                 })
+                failed_requirements.append(req)
         
-        # Install pytest as a dev dependency if not already installed
+        # Raise an error if any requirements failed to install
+        if failed_requirements:
+            error_message = f"Failed to install the following requirements: {', '.join(failed_requirements)}"
+            self.logger.error(error_message)
+            raise RuntimeError(error_message)
+        
+        # Install pytest as a dev dependency
         try:
-            self.logger.info("Installing pytest as a dev dependency if not already installed")
+            self.logger.info("Installing pytest as a dev dependency")
             
             cmd = [
                 'uv',
@@ -267,8 +281,8 @@ class DependencyInstaller:
             )
         except subprocess.CalledProcessError as e:
             self.logger.warning(f"Failed to install pytest: {e.stderr}")
+            raise RuntimeError("Failed to install pytest")
         
-        self.logger.info(f"Installed {sum(1 for r in results if r['success'])} out of {len(requirements)} requirements")
         return results
     
     def _install_requirements_pip(self, requirements, venv_path):
@@ -281,6 +295,9 @@ class DependencyInstaller:
         
         Returns:
             list: List of dictionaries with installation results.
+        
+        Raises:
+            RuntimeError: If any requirement fails to install.
         """
         self.logger.info(f"Installing {len(requirements)} requirements using pip")
         
@@ -298,6 +315,7 @@ class DependencyInstaller:
             raise RuntimeError(f"pip not found in virtual environment at {pip_path}")
         
         results = []
+        failed_requirements = []
         
         # First try to create a requirements.txt and install all requirements at once
         try:
@@ -344,7 +362,6 @@ class DependencyInstaller:
             self.logger.info("Successfully installed all requirements via requirements.txt")
         except subprocess.CalledProcessError as e:
             self.logger.warning(f"Failed to install all requirements at once: {e.stderr}")
-            self.logger.info("Falling back to installing packages individually")
             
             # Clean up the temporary file if it exists
             if requirements_path.exists():
@@ -383,60 +400,19 @@ class DependencyInstaller:
                     error_msg = e.stderr
                     self.logger.warning(f"Failed to install {req}: {error_msg}")
                     
-                    # Check if this is a version constraint error
-                    if "Could not find a version that satisfies the requirement" in error_msg:
-                        self.logger.info(f"Version constraint error for {req}, trying to find lowest available version")
-                        
-                        # Parse the available versions from the error message
-                        import re
-                        versions_match = re.search(r'from versions: ([^)]+)', error_msg)
-                        
-                        if versions_match:
-                            available_versions = versions_match.group(1).strip().split(', ')
-                            if available_versions:
-                                # Get package name without version
-                                package_name = req.split('==')[0] if '==' in req else req
-                                
-                                # Try to install the lowest available version
-                                lowest_version = available_versions[0]
-                                self.logger.info(f"Trying to install {package_name} with lowest available version: {lowest_version}")
-                                
-                                try:
-                                    cmd = [
-                                        str(pip_path),
-                                        'install',
-                                        f"{package_name}=={lowest_version}",
-                                        '--no-cache-dir'
-                                    ]
-                                    
-                                    self.logger.info(f"Running pip with command: {' '.join(cmd)}")
-                                    
-                                    result = subprocess.run(
-                                        cmd,
-                                        check=True,
-                                        capture_output=True,
-                                        text=True
-                                    )
-                                    
-                                    results.append({
-                                        'package': req,
-                                        'success': True,
-                                        'output': f"Installed {package_name}=={lowest_version} (original request: {req})",
-                                        'method': 'pip fallback to lowest version'
-                                    })
-                                    
-                                    self.logger.info(f"Successfully installed {package_name}=={lowest_version} as fallback for {req}")
-                                    continue
-                                except subprocess.CalledProcessError as fallback_error:
-                                    self.logger.warning(f"Failed to install lowest version for {req}: {fallback_error.stderr}")
-                    
-                    # If we get here, either it wasn't a version constraint error or the fallback failed
                     results.append({
                         'package': req,
                         'success': False,
                         'error': error_msg,
                         'method': 'pip individual'
                     })
+                    failed_requirements.append(req)
+        
+        # Raise an error if any requirements failed to install
+        if failed_requirements:
+            error_message = f"Failed to install the following requirements: {', '.join(failed_requirements)}"
+            self.logger.error(error_message)
+            raise RuntimeError(error_message)
         
         # Install pytest if not already installed
         try:
@@ -466,10 +442,6 @@ class DependencyInstaller:
             self.logger.info("Successfully installed pytest")
         except subprocess.CalledProcessError as e:
             self.logger.warning(f"Failed to install pytest: {e.stderr}")
-        except FileNotFoundError as e:
-            self.logger.error(f"Failed to install pytest: {str(e)}")
-            self.logger.error(f"Current directory: {os.getcwd()}")
-            self.logger.error(f"Pip path: {pip_path}, exists: {pip_path.exists()}")
+            raise RuntimeError("Failed to install pytest")
         
-        self.logger.info(f"Installed {sum(1 for r in results if r['success'])} out of {len(requirements)} requirements")
         return results 
