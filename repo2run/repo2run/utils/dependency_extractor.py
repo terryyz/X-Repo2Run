@@ -63,8 +63,9 @@ class DependencyExtractor:
         # Extract from environment.yml
         requirements.update(self._extract_from_environment_yml())
 
-        if not requirements:
-            requirements = self._extract_using_pipreqs()
+        # Always run pipreqs to get additional dependencies
+        pipreqs_requirements = self._extract_using_pipreqs()
+        requirements.update(pipreqs_requirements)
         
         self.logger.info(f"Found requirements from {len(requirements)} sources")
         return requirements
@@ -80,15 +81,22 @@ class DependencyExtractor:
             list: List of unified requirements.
         """
         self.logger.info("Unifying requirements")
-        
-        # Flatten all requirements
-        all_reqs = []
+
+        # Separate pipreqs requirements from other sources
+        pipreqs_reqs = []
+        other_reqs = []
         for source, reqs in requirements.items():
-            all_reqs.extend(reqs)
+            if source == 'pipreqs':
+                pipreqs_reqs.extend(reqs)
+            else:
+                other_reqs.extend(reqs)
         
-        # Parse requirements to extract package names and versions
-        parsed_reqs = {}
-        for req in all_reqs:
+        # Parse all requirements to extract package names and versions
+        parsed_other_reqs = {}
+        parsed_pipreqs_reqs = {}
+        
+        # Process non-pipreqs requirements first
+        for req in other_reqs:
             # Skip empty lines and comments
             if not req or req.startswith('#'):
                 continue
@@ -100,19 +108,94 @@ class DependencyExtractor:
                 version_spec = match.group(2) or ''
                 
                 # Update parsed requirements
-                if package_name in parsed_reqs:
-                    # If we already have a version spec, keep the more specific one
-                    if not parsed_reqs[package_name] or (version_spec and len(version_spec) > len(parsed_reqs[package_name])):
-                        parsed_reqs[package_name] = version_spec
+                if package_name in parsed_other_reqs:
+                    existing_spec = parsed_other_reqs[package_name]
+                    # If we have multiple version specs, attempt to find the lowest compatible version
+                    if version_spec and existing_spec:
+                        # For simplicity, we'll prefer the shorter version string as it's likely less restrictive
+                        # A more complex implementation would parse and compare semantic versions
+                        if len(version_spec) < len(existing_spec):
+                            parsed_other_reqs[package_name] = version_spec
                 else:
-                    parsed_reqs[package_name] = version_spec
+                    parsed_other_reqs[package_name] = version_spec
+        
+        # Now process pipreqs requirements
+        for req in pipreqs_reqs:
+            if not req or req.startswith('#'):
+                continue
+            
+            match = re.match(r'^([a-zA-Z0-9_\-\.]+)([<>=!~].+)?$', req)
+            if match:
+                package_name = match.group(1).lower()
+                version_spec = match.group(2) or ''
+                
+                # Only process if not already in other requirements
+                if package_name not in parsed_other_reqs:
+                    if package_name in parsed_pipreqs_reqs:
+                        existing_spec = parsed_pipreqs_reqs[package_name]
+                        # Find lowest compatible version
+                        if version_spec and existing_spec and '==' in version_spec and '==' in existing_spec:
+                            try:
+                                # Extract version numbers
+                                current_version = re.search(r'==\s*([\d\.]+)', version_spec)
+                                existing_version = re.search(r'==\s*([\d\.]+)', existing_spec)
+                                
+                                if current_version and existing_version:
+                                    current_version = current_version.group(1)
+                                    existing_version = existing_version.group(1)
+                                    
+                                    # Compare version numbers
+                                    if self._compare_versions(current_version, existing_version) < 0:
+                                        parsed_pipreqs_reqs[package_name] = version_spec
+                            except Exception as e:
+                                self.logger.warning(f"Failed to compare versions for {package_name}: {str(e)}")
+                                # Keep the shorter version spec as fallback
+                                if len(version_spec) < len(existing_spec):
+                                    parsed_pipreqs_reqs[package_name] = version_spec
+                        else:
+                            # If not both are == format, prefer the shorter one
+                            if len(version_spec) < len(existing_spec):
+                                parsed_pipreqs_reqs[package_name] = version_spec
+                    else:
+                        parsed_pipreqs_reqs[package_name] = version_spec
+        
+        # Combine both requirement sets
+        combined_reqs = {**parsed_other_reqs, **parsed_pipreqs_reqs}
         
         # Reconstruct unified requirements
-        unified_reqs = [f"{package}{version}" for package, version in parsed_reqs.items()]
+        unified_reqs = [f"{package}{version}" for package, version in combined_reqs.items()]
         unified_reqs.sort()
         
-        self.logger.info(f"Unified {len(all_reqs)} requirements into {len(unified_reqs)} unique packages")
+        self.logger.info(f"Unified requirements into {len(unified_reqs)} unique packages")
         return unified_reqs
+    
+    def _compare_versions(self, version1, version2):
+        """
+        Compare two version strings.
+        
+        Args:
+            version1 (str): First version string
+            version2 (str): Second version string
+            
+        Returns:
+            int: -1 if version1 < version2, 0 if version1 == version2, 1 if version1 > version2
+        """
+        v1_parts = [int(x) for x in version1.split('.')]
+        v2_parts = [int(x) for x in version2.split('.')]
+        
+        # Pad with zeros to make same length
+        while len(v1_parts) < len(v2_parts):
+            v1_parts.append(0)
+        while len(v2_parts) < len(v1_parts):
+            v2_parts.append(0)
+            
+        for i in range(len(v1_parts)):
+            if v1_parts[i] < v2_parts[i]:
+                return -1
+            elif v1_parts[i] > v2_parts[i]:
+                return 1
+                
+        return 0
     
     def _extract_from_requirements_txt(self):
         """

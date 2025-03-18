@@ -350,6 +350,21 @@ def main():
                     )
                 add_log_entry(f"Virtual environment created at {venv_path} with Python 3.10")
                 
+                # Install the package in development mode
+                try:
+                    add_log_entry("Installing package in development mode (pip install -e .)")
+                    result = subprocess.run(
+                        ['uv', 'pip', 'install', '-e', '.'],
+                        cwd=project_dir,
+                        check=True,
+                        capture_output=True,
+                        text=True
+                    )
+                    add_log_entry(f"Successfully installed package in development mode: {result.stdout.strip()}")
+                except subprocess.CalledProcessError as e:
+                    add_log_entry(f"Failed to install package in development mode: {e.stderr}", level="WARNING")
+                    add_log_entry("Continuing without development mode installation", level="WARNING")
+                
             except subprocess.CalledProcessError as e:
                 add_log_entry(f"Failed to initialize project with UV: {e.stderr}", level="ERROR")
                 result_data["status"] = "error"
@@ -399,9 +414,30 @@ def main():
                         )
                         
                         add_log_entry(f"Successfully upgraded pip: {result.stdout.strip()}")
+                        
+                        # Install the package in development mode
+                        add_log_entry("Installing package in development mode (pip install -e .)")
+                        
+                        install_editable_cmd = [
+                            str(pip_path),
+                            'install',
+                            '-e',
+                            '.'
+                        ]
+                        
+                        add_log_entry(f"Running pip with command: {' '.join(install_editable_cmd)}")
+                        
+                        result = subprocess.run(
+                            install_editable_cmd,
+                            cwd=project_dir,
+                            check=True,
+                            capture_output=True,
+                            text=True
+                        )
+                        
+                        add_log_entry(f"Successfully installed package in development mode: {result.stdout.strip()}")
                     except subprocess.CalledProcessError as e:
-                        add_log_entry(f"Failed to upgrade pip: {e.stderr}", level="WARNING")
-                        add_log_entry("Continuing with existing pip version", level="WARNING")
+                        add_log_entry(f"Failed to upgrade pip or install package in development mode: {e.stderr}", level="WARNING")
                     except Exception as e:
                         add_log_entry(f"Error upgrading pip: {str(e)}", level="WARNING")
                         add_log_entry("Continuing with existing pip version", level="WARNING")
