@@ -721,18 +721,38 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             if test_results.get("status") == "error":
                 add_log_entry("Setting status to error due to test error")
                 result_data["status"] = "error"
-            elif test_results["tests_failed"] > 0 and test_results["tests_passed"] > 0:
-                add_log_entry(f"Setting status to partial_success due to partial test failures: {test_results['tests_failed']}")
-                result_data["status"] = "partial_success"
-            elif test_results["tests_failed"] > 0 and test_results["tests_passed"] == 0:
-                add_log_entry(f"Setting status to failure due to all tests failing: {test_results['tests_failed']}")
-                result_data["status"] = "failure"
-            elif result_data["tests"]["found"] > 0 and result_data["tests"]["passed"] == 0:
+            elif test_results["tests_failed"] > 0:
+                # Validate test counts for consistency
+                if test_results["tests_passed"] < 0:
+                    add_log_entry(f"Invalid test counts detected: found={test_results['tests_found']}, passed={test_results['tests_passed']}, failed={test_results['tests_failed']}", level="WARNING")
+                    # Fix negative passed tests
+                    result_data["tests"]["passed"] = max(0, result_data["tests"]["passed"])
+                    add_log_entry(f"Corrected passed tests count to: {result_data['tests']['passed']}")
+                
+                # Set appropriate status based on test results
+                if test_results["tests_passed"] > 0:
+                    add_log_entry(f"Setting status to partial_success due to partial test failures: {test_results['tests_failed']}")
+                    result_data["status"] = "partial_success"
+                else:
+                    add_log_entry(f"Setting status to failure due to all tests failing: {test_results['tests_failed']}")
+                    result_data["status"] = "failure"
+            elif result_data["tests"]["found"] > 0 and result_data["tests"]["passed"] <= 0:
                 add_log_entry("Setting status to failure because tests were found but none passed")
                 result_data["status"] = "failure"
             else:
-                add_log_entry("Setting status to success")
-                result_data["status"] = "success"
+                # Validate total test counts
+                if result_data["tests"]["found"] > 0 and (result_data["tests"]["passed"] + result_data["tests"]["failed"] + result_data["tests"]["skipped"]) != result_data["tests"]["found"]:
+                    add_log_entry(f"Inconsistent test counts detected: found={result_data['tests']['found']}, passed={result_data['tests']['passed']}, failed={result_data['tests']['failed']}, skipped={result_data['tests']['skipped']}", level="WARNING")
+                    
+                    if result_data["tests"]["failed"] > 0:
+                        add_log_entry("Setting status to partial_success due to some failed tests in inconsistent results")
+                        result_data["status"] = "partial_success"
+                    else:
+                        add_log_entry("Setting status to success despite inconsistent test counts")
+                        result_data["status"] = "success"
+                else:
+                    add_log_entry("Setting status to success")
+                    result_data["status"] = "success"
         
         # Generate summary
         end_time = time.time()
