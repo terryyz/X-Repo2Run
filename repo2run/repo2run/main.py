@@ -828,6 +828,14 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         
         add_log_entry(f"Results written to {results_jsonl_path}")
         
+        # Clean up the project directory to save disk space
+        try:
+            add_log_entry(f"Cleaning up project directory {project_dir}")
+            shutil.rmtree(project_dir)
+            add_log_entry(f"Successfully removed project directory {project_dir}")
+        except Exception as e:
+            add_log_entry(f"Warning: Failed to remove project directory {project_dir}: {e}", level="WARNING")
+        
         return 0
     
     except Exception as e:
@@ -841,6 +849,15 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         # Write the error result to results.jsonl
         with open(results_jsonl_path, "a") as f:
             f.write(json.dumps(result_data) + "\n")
+        
+        # Clean up the project directory in case of error too
+        if 'project_dir' in locals() and project_dir.exists():
+            try:
+                add_log_entry(f"Cleaning up project directory {project_dir} after error")
+                shutil.rmtree(project_dir)
+                add_log_entry(f"Successfully removed project directory {project_dir}")
+            except Exception as cleanup_error:
+                add_log_entry(f"Warning: Failed to remove project directory after error: {cleanup_error}", level="WARNING")
         
         return 1
 
