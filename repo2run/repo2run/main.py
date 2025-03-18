@@ -227,7 +227,6 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             repo_path = repo_manager.clone_repository(full_name, sha)
             repo_name = repo_path.name
             add_log_entry(f"Cloned repository {full_name} at {sha}", repo_name=repo_name)
-            result_data["repository_name"] = repo_name
             # Update the repository identifier for GitHub repos - use a simpler format
             repo_identifier = f"{full_name.replace('/', '_')}_{sha[:7]}"  # Use shorter SHA
         else:
@@ -235,7 +234,6 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             repo_path = repo_manager.setup_local_repository(local_path)
             repo_name = repo_path.name
             add_log_entry(f"Set up local repository from {local_path}", repo_name=repo_name)
-            result_data["repository_name"] = repo_name
             # Update the repository identifier for local paths - use just the directory name to avoid long paths
             repo_identifier = repo_name
         
@@ -736,6 +734,19 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                 else:
                     add_log_entry(f"Setting status to failure due to all tests failing: {test_results['tests_failed']}")
                     result_data["status"] = "failure"
+            elif test_results["tests_skipped"] > 0 and test_results["tests_skipped"] == test_results["tests_found"]:
+                # All tests were skipped
+                add_log_entry(f"All {test_results['tests_skipped']} tests were skipped")
+                
+                # Check if test details confirm the skipped status
+                all_skipped_in_details = all(result.get("status") == "skipped" for result in test_results.get("test_results", []))
+                
+                if all_skipped_in_details:
+                    add_log_entry("Setting status to failure because all tests were skipped")
+                    result_data["status"] = "failure"
+                else:
+                    add_log_entry("Setting status to skip since tests were skipped but may exist")
+                    result_data["status"] = "skip"
             elif result_data["tests"]["found"] > 0 and result_data["tests"]["passed"] <= 0:
                 add_log_entry("Setting status to failure because tests were found but none passed")
                 result_data["status"] = "failure"

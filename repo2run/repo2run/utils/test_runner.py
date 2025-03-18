@@ -639,6 +639,9 @@ class TestRunner:
         tests_failed = 0
         tests_skipped = 0
         
+        # Flag to track if all tests were skipped
+        all_tests_skipped = False
+        
         # Try to parse the test summary using regex
         summary_pattern = re.compile(r"=+\s*(\d+)\s+passed[,\s]+(\d+)\s+skipped[,\s]+(\d+)\s+failed")
         for line in stdout.splitlines():
@@ -684,6 +687,8 @@ class TestRunner:
             elif stdout and "no tests ran" in stdout.lower():
                 # No tests ran
                 tests_skipped = tests_found
+                all_tests_skipped = True
+                self.logger.warning("No tests ran - all tests will be marked as skipped")
             elif "FAILURES" in stdout:
                 # Some tests failed
                 # Count failed tests by counting the "FAILED" lines
@@ -695,9 +700,9 @@ class TestRunner:
             if tests_passed == 0 and tests_skipped == 0 and tests_failed == 0:
                 # Default assumption: all tests passed if no failures detected
                 tests_passed = tests_found
-            elif tests_passed == 0:
+            elif tests_passed == 0 and not all_tests_skipped:
                 # Calculate passed tests by subtraction
-                tests_passed = tests_found - tests_failed - tests_skipped
+                tests_passed = max(0, tests_found - tests_failed - tests_skipped)  # Ensure non-negative
             
         # Parse individual test results
         test_results = []
@@ -712,6 +717,7 @@ class TestRunner:
             test_file_dict[test_name] = {
                 "file": test_file,
                 "failed": False,
+                "skipped": all_tests_skipped,  # Mark all tests as skipped if no tests ran
                 "message": ""
             }
         
@@ -736,6 +742,12 @@ class TestRunner:
                     "name": test_name,
                     "status": "failure",
                     "message": info["message"]
+                })
+            elif info["skipped"]:
+                test_results.append({
+                    "name": test_name,
+                    "status": "skipped",
+                    "message": "Test was skipped - no tests ran"
                 })
             else:
                 test_results.append({
