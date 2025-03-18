@@ -72,7 +72,9 @@ class TestRunner:
             "**/tests/**/*_test.py",
             "**/test/**/*_test.py",
             "**/test_*.py",
-            "**/*_test.py"
+            "**/*_test.py",
+            "**/test/*.py",
+            "**/tests/*.py"
         ]
         
         # Files to exclude (paths containing these shouldn't be included)
