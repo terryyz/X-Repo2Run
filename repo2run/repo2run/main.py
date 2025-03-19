@@ -46,6 +46,7 @@ import logging
 from pathlib import Path
 from typing import List, Tuple, Optional
 from tqdm import tqdm
+import re
 
 from repo2run.utils.repo_manager import RepoManager
 from repo2run.utils.dependency_extractor import DependencyExtractor
@@ -626,45 +627,56 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             has_failures = False
             failure_count = 0
             success_count = 0
+            skip_count = 0
             total_test_cases = 0
 
+            # First try to get counts from pytest summary line
             for test_detail in test_results.get("test_results", []):
-                # Extract test case count from the message if available
-                test_cases_in_file = 0
                 message = test_detail.get("message", "")
                 
-                # Try to parse test counts from pytest output
-                if "collected" in message:
-                    try:
-                        import re
-                        collected_match = re.search(r'collected (\d+) items', message)
-                        if collected_match:
-                            test_cases_in_file = int(collected_match.group(1))
-                    except:
-                        test_cases_in_file = 1  # Default to 1 if parsing fails
-                else:
-                    test_cases_in_file = 1  # Default to 1 if no collection info
+                # Look for pytest summary line like "X failed, Y passed, Z warnings in T.TTs"
+                summary_match = re.search(r'(\d+) failed, (\d+) passed(?:, (\d+) skipped)?.* in \d+\.\d+s', message)
+                if summary_match:
+                    failure_count = int(summary_match.group(1))
+                    success_count = int(summary_match.group(2))
+                    skip_count = int(summary_match.group(3)) if summary_match.group(3) else 0
+                    total_test_cases = failure_count + success_count + skip_count
+                    has_failures = failure_count > 0
+                    break
+            
+            # If no summary line found, fall back to counting individual results
+            if total_test_cases == 0:
+                for test_detail in test_results.get("test_results", []):
+                    message = test_detail.get("message", "")
+                    status = test_detail.get("status", "")
+                    
+                    if status == "failure" or "ERROR" in message or "FAILED" in message:
+                        has_failures = True
+                        # Count individual failures
+                        failure_matches = len(re.findall(r'(ERROR|FAILED)', message))
+                        failure_count += failure_matches if failure_matches > 0 else 1
+                    elif status == "success":
+                        # Count individual successes (PASSED)
+                        success_matches = len(re.findall(r'PASSED', message))
+                        success_count += success_matches if success_matches > 0 else 1
+                    elif status == "skipped" or "SKIPPED" in message:
+                        skip_matches = len(re.findall(r'SKIPPED', message))
+                        skip_count += skip_matches if skip_matches > 0 else 1
                 
-                total_test_cases += test_cases_in_file
-                
-                if test_detail.get("status") == "failure" or "ERROR" in message:
-                    has_failures = True
-                    # Count failed test cases from error messages
-                    error_count = message.count("ERROR") + message.count("FAILED")
-                    failure_count += error_count if error_count > 0 else 1
-                elif test_detail.get("status") == "success":
-                    # For success cases, all test cases in the file passed
-                    success_count += test_cases_in_file
+                total_test_cases = failure_count + success_count + skip_count
 
             # Store test results in the result data
             result_data["tests"]["found"] = total_test_cases
             result_data["tests"]["passed"] = success_count
             result_data["tests"]["failed"] = failure_count
-            result_data["tests"]["skipped"] = test_results.get("tests_skipped", 0)
+            result_data["tests"]["skipped"] = skip_count
             result_data["tests"]["details"] = test_results["test_results"]
             
             # Update test status based on actual failures, successes, and skips
-            if result_data["tests"]["skipped"] > 0 and result_data["tests"]["skipped"] == result_data["tests"]["found"]:
+            if total_test_cases == 0:
+                add_log_entry("Setting status to skip - no test cases were found")
+                result_data["status"] = "skip"
+            elif skip_count > 0 and skip_count == total_test_cases:
                 # Check if all skipped tests were due to "No test functions found"
                 all_no_tests = all("No test functions found" in detail.get("message", "") 
                                  for detail in test_results.get("test_results", []))
@@ -681,16 +693,12 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                 else:
                     add_log_entry("Setting status to failure due to test failures in output")
                     result_data["status"] = "failure"
-            elif success_count > 0:
-                add_log_entry("Setting status to success - tests passed with no failures")
-                result_data["status"] = "success"
             else:
-                add_log_entry("Setting status to skip - no tests were actually run")
-                result_data["status"] = "skip"
+                add_log_entry(f"Setting status to success - all {success_count} test cases passed")
+                result_data["status"] = "success"
                 
-            # Validate total counts
-            if total_test_cases > 0 and (success_count + failure_count + result_data["tests"]["skipped"]) != total_test_cases:
-                add_log_entry(f"Warning: Test count mismatch - Total cases: {total_test_cases}, Passed: {success_count}, Failed: {failure_count}, Skipped: {result_data['tests']['skipped']}", level="WARNING")
+            # Log detailed test counts
+            add_log_entry(f"Test summary: {total_test_cases} total cases - {success_count} passed, {failure_count} failed, {skip_count} skipped")
         
         # Generate summary
         end_time = time.time()
