@@ -622,40 +622,62 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             # Run test discovery
             test_results = test_runner.run_tests()
             
-            # Check for errors in test details
+            # Check for errors in test details and count individual test cases
             has_failures = False
             failure_count = 0
             success_count = 0
+            total_test_cases = 0
+
             for test_detail in test_results.get("test_results", []):
-                if test_detail.get("status") == "failure" or "ERROR" in test_detail.get("message", ""):
+                # Extract test case count from the message if available
+                test_cases_in_file = 0
+                message = test_detail.get("message", "")
+                
+                # Try to parse test counts from pytest output
+                if "collected" in message:
+                    try:
+                        import re
+                        collected_match = re.search(r'collected (\d+) items', message)
+                        if collected_match:
+                            test_cases_in_file = int(collected_match.group(1))
+                    except:
+                        test_cases_in_file = 1  # Default to 1 if parsing fails
+                else:
+                    test_cases_in_file = 1  # Default to 1 if no collection info
+                
+                total_test_cases += test_cases_in_file
+                
+                if test_detail.get("status") == "failure" or "ERROR" in message:
                     has_failures = True
-                    failure_count += 1
+                    # Count failed test cases from error messages
+                    error_count = message.count("ERROR") + message.count("FAILED")
+                    failure_count += error_count if error_count > 0 else 1
                 elif test_detail.get("status") == "success":
-                    success_count += 1
+                    # For success cases, all test cases in the file passed
+                    success_count += test_cases_in_file
 
             # Store test results in the result data
-            result_data["tests"]["found"] = test_results["tests_found"]
-            result_data["tests"]["passed"] = test_results["tests_passed"]
-            result_data["tests"]["failed"] = test_results["tests_failed"]
-            result_data["tests"]["skipped"] = test_results["tests_skipped"]
+            result_data["tests"]["found"] = total_test_cases
+            result_data["tests"]["passed"] = success_count
+            result_data["tests"]["failed"] = failure_count
+            result_data["tests"]["skipped"] = test_results.get("tests_skipped", 0)
             result_data["tests"]["details"] = test_results["test_results"]
             
             # Update test status based on actual failures and successes
             if has_failures:
                 if success_count > 0:
-                    add_log_entry(f"Setting status to partial_success because {success_count} tests passed and {failure_count} tests failed")
+                    add_log_entry(f"Setting status to partial_success because {success_count} test cases passed and {failure_count} test cases failed")
                     result_data["status"] = "partial_success"
                 else:
                     add_log_entry("Setting status to failure due to test failures in output")
                     result_data["status"] = "failure"
-                
-                # Update test counts if they were incorrectly reported
-                if result_data["tests"]["failed"] == 0:
-                    result_data["tests"]["failed"] = failure_count
-                    result_data["tests"]["passed"] = success_count
             else:
                 add_log_entry("Setting status to success - no failures detected in output")
                 result_data["status"] = "success"
+                
+            # Validate total counts
+            if total_test_cases > 0 and (success_count + failure_count) != total_test_cases:
+                add_log_entry(f"Warning: Test count mismatch - Total cases: {total_test_cases}, Passed: {success_count}, Failed: {failure_count}", level="WARNING")
         
         # Generate summary
         end_time = time.time()
