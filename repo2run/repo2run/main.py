@@ -211,14 +211,14 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             logger.error(message)
     
     try:
-        # Initialize repository
-        repo_manager = RepoManager(workspace_dir=args.workspace_dir, logger=logger)
+        # Initialize repository directly in output directory
+        repo_manager = RepoManager(output_dir=output_dir, logger=logger)
         
         # Now that we have repo_manager, determine the repository identifier
         if repo_info:
             full_name, sha = repo_info
-            repo_path = repo_manager.clone_repository(full_name, sha)
-            repo_name = repo_path.name
+            working_dir = repo_manager.clone_repository(full_name, sha)
+            repo_name = working_dir.name
             add_log_entry(f"Cloned repository {full_name} at {sha}", repo_name=repo_name)
             # Update the repository field to the original input path (GitHub repo path with SHA)
             result_data["repository"] = f"{full_name}@{sha}"
@@ -226,8 +226,8 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             repo_identifier = f"{full_name.replace('/', '_')}_{sha[:7]}"  # Use shorter SHA
         else:
             local_path = Path(local_path).resolve()
-            repo_path = repo_manager.setup_local_repository(local_path)
-            repo_name = repo_path.name
+            working_dir = repo_manager.setup_local_repository(local_path)
+            repo_name = working_dir.name
             add_log_entry(f"Set up local repository from {local_path}", repo_name=repo_name)
             # Update the repository field to the original input path
             result_data["repository"] = str(local_path)
@@ -236,89 +236,12 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         
         # Store the repo_identifier separately for use in creating directories
         result_data["repository_identifier"] = repo_identifier
-        
-        # Create a project directory in the output folder
-        project_dir = output_dir / repo_identifier
+        result_data["project_directory"] = str(working_dir)
         
         add_log_entry(f"Using project identifier: {repo_identifier}")
-        add_log_entry(f"Project will be processed in: {project_dir}")
+        add_log_entry(f"Project will be processed in: {working_dir}")
         
-        # Check if project directory already exists
-        if project_dir.exists():
-            if args.overwrite:
-                add_log_entry(f"Project directory {project_dir} already exists. Overwriting as requested.", level="WARNING")
-                # Remove the existing directory
-                shutil.rmtree(project_dir)
-            else:
-                add_log_entry(f"Project directory {project_dir} already exists. Use --overwrite to overwrite.", level="ERROR")
-                result_data["status"] = "error"
-                result_data["error"] = "Project directory already exists"
-                # Write the result to results.jsonl
-                with open(results_jsonl_path, "a") as f:
-                    f.write(json.dumps(result_data) + "\n")
-                return 1
-        
-        # Create the project directory
-        project_dir.mkdir(parents=True, exist_ok=False)
-        add_log_entry(f"Created project directory at {project_dir}")
-        result_data["project_directory"] = str(project_dir)
-        
-        # Copy the entire repository to the project directory
-        add_log_entry(f"Copying repository from {repo_path} to {project_dir}")
-        try:
-            # Ensure the project directory exists
-            project_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Use a straight copy rather than recursive copy to avoid path length issues
-            excluded_dirs = ['.git', '.venv', '__pycache__', '.pytest_cache']
-            
-            # Function to safely copy files without exceeding path length limits
-            def safe_copy(src, dst):
-                try:
-                    if src.is_dir():
-                        if src.name in excluded_dirs:
-                            add_log_entry(f"Skipping excluded directory: {src.name}")
-                            return
-                        # Create the destination directory if it doesn't exist
-                        dst.mkdir(parents=True, exist_ok=True)
-                        # Copy each item in the directory
-                        for item in src.iterdir():
-                            # Skip if the path is getting too long
-                            if len(str(dst / item.name)) > 200:
-                                add_log_entry(f"Skipping {item.name} - path too long", level="WARNING")
-                                continue
-                            safe_copy(item, dst / item.name)
-                    else:
-                        # Copy the file
-                        shutil.copy2(src, dst)
-                except Exception as e:
-                    add_log_entry(f"Error copying {src.name}: {e}", level="WARNING")
-            
-            # Use the safe_copy function to copy the repository
-            safe_copy(repo_path, project_dir)
-            
-            # Verify copy
-            try:
-                copied_items = list(os.listdir(project_dir))
-                add_log_entry(f"Copied {len(copied_items)} items to project directory: {copied_items}")
-            except Exception as e:
-                add_log_entry(f"Error listing items in project directory: {e}", level="WARNING")
-            
-            # Set working_dir to project_dir for all subsequent operations
-            working_dir = project_dir
-        
-        except Exception as e:
-            add_log_entry(f"Critical error during repository copy: {e}", level="ERROR")
-            result_data["status"] = "error"
-            result_data["error"] = f"Failed to copy repository: {e}"
-            
-            # Write the result to results.jsonl
-            with open(results_jsonl_path, "a") as f:
-                f.write(json.dumps(result_data) + "\n")
-            
-            raise RuntimeError(f"Failed to copy repository: {e}")
-        
-        # Extract dependencies - use the working_dir (project_dir) instead of repo_path
+        # Extract dependencies - use working_dir
         dependency_extractor = DependencyExtractor(working_dir, logger=logger)
         requirements = dependency_extractor.extract_all_requirements()
         unified_requirements = dependency_extractor.unify_requirements(requirements)
@@ -327,7 +250,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         
         add_log_entry(f"Extracted {len(unified_requirements)} requirements")
         
-        # Define paths for configuration files in the output directory
+        # Define paths for configuration files in the working directory
         requirements_in_path = working_dir / "requirements.in"
         compiled_requirements_path = working_dir / "requirements.txt"
         pyproject_path = working_dir / "pyproject.toml"
@@ -845,11 +768,11 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         
         # Clean up the project directory to save disk space
         try:
-            add_log_entry(f"Cleaning up project directory {project_dir}")
-            shutil.rmtree(project_dir)
-            add_log_entry(f"Successfully removed project directory {project_dir}")
+            add_log_entry(f"Cleaning up project directory {working_dir}")
+            shutil.rmtree(working_dir)
+            add_log_entry(f"Successfully removed project directory {working_dir}")
         except Exception as e:
-            add_log_entry(f"Warning: Failed to remove project directory {project_dir}: {e}", level="WARNING")
+            add_log_entry(f"Warning: Failed to remove project directory {working_dir}: {e}", level="WARNING")
         
         return 0
     
@@ -866,11 +789,11 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             f.write(json.dumps(result_data) + "\n")
         
         # Clean up the project directory in case of error too
-        if 'project_dir' in locals() and project_dir.exists():
+        if 'working_dir' in locals() and working_dir.exists():
             try:
-                add_log_entry(f"Cleaning up project directory {project_dir} after error")
-                shutil.rmtree(project_dir)
-                add_log_entry(f"Successfully removed project directory {project_dir}")
+                add_log_entry(f"Cleaning up project directory {working_dir} after error")
+                shutil.rmtree(working_dir)
+                add_log_entry(f"Successfully removed project directory {working_dir}")
             except Exception as cleanup_error:
                 add_log_entry(f"Warning: Failed to remove project directory after error: {cleanup_error}", level="WARNING")
         

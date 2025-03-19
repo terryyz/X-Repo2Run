@@ -17,28 +17,28 @@ class RepoManager:
     Manages repository operations such as cloning and setting up local repositories.
     """
     
-    def __init__(self, workspace_dir=None, logger=None):
+    def __init__(self, output_dir=None, logger=None):
         """
-        Initialize RepoManager with a workspace directory.
+        Initialize RepoManager with an output directory.
         
         Args:
-            workspace_dir (Path or str, optional): Directory to use for repository operations.
+            output_dir (Path or str, optional): Directory to use for repository operations.
                 If None, uses the current working directory.
             logger (logging.Logger, optional): Logger for recording operations.
         """
         self.logger = logger
         
-        # Use the provided workspace directory, or default to current working directory
-        if workspace_dir:
-            self.workspace_dir = Path(workspace_dir).resolve()
+        # Use the provided output directory, or default to current working directory
+        if output_dir:
+            self.output_dir = Path(output_dir).resolve()
         else:
-            self.workspace_dir = Path.cwd()
+            self.output_dir = Path.cwd()
         
-        # Ensure the workspace directory exists
-        self.workspace_dir.mkdir(parents=True, exist_ok=True)
+        # Ensure the output directory exists
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         
         if self.logger:
-            self.logger.info(f"Using workspace directory: {self.workspace_dir}")
+            self.logger.info(f"Using output directory: {self.output_dir}")
         
         self.temp_dir = None
     
@@ -68,7 +68,7 @@ class RepoManager:
         author_name, repo_name = full_name.split('/')
         
         # Create directory structure
-        repo_dir = self.workspace_dir / "github" / author_name / repo_name
+        repo_dir = self.output_dir / f"{full_name.replace('/', '_')}_{sha[:7]}"
         if repo_dir.exists():
             self.logger.info(f"Removing existing repository at {repo_dir}")
             shutil.rmtree(repo_dir)
@@ -121,8 +121,8 @@ class RepoManager:
         # Extract repository name from the local path
         repo_name = local_path.name
         
-        # Create directory structure
-        repo_dir = self.workspace_dir / "local" / repo_name
+        # Create directory structure directly in output directory
+        repo_dir = self.output_dir / repo_name
         if repo_dir.exists():
             self.logger.info(f"Removing existing repository at {repo_dir}")
             shutil.rmtree(repo_dir)
