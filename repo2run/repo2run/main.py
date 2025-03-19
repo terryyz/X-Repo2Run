@@ -663,21 +663,34 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             result_data["tests"]["skipped"] = test_results.get("tests_skipped", 0)
             result_data["tests"]["details"] = test_results["test_results"]
             
-            # Update test status based on actual failures and successes
-            if has_failures:
+            # Update test status based on actual failures, successes, and skips
+            if result_data["tests"]["skipped"] > 0 and result_data["tests"]["skipped"] == result_data["tests"]["found"]:
+                # Check if all skipped tests were due to "No test functions found"
+                all_no_tests = all("No test functions found" in detail.get("message", "") 
+                                 for detail in test_results.get("test_results", []))
+                if all_no_tests:
+                    add_log_entry("Setting status to skip because no test functions were found in any test files")
+                    result_data["status"] = "skip"
+                else:
+                    add_log_entry("Setting status to failure because all tests were explicitly skipped")
+                    result_data["status"] = "failure"
+            elif has_failures:
                 if success_count > 0:
                     add_log_entry(f"Setting status to partial_success because {success_count} test cases passed and {failure_count} test cases failed")
                     result_data["status"] = "partial_success"
                 else:
                     add_log_entry("Setting status to failure due to test failures in output")
                     result_data["status"] = "failure"
-            else:
-                add_log_entry("Setting status to success - no failures detected in output")
+            elif success_count > 0:
+                add_log_entry("Setting status to success - tests passed with no failures")
                 result_data["status"] = "success"
+            else:
+                add_log_entry("Setting status to skip - no tests were actually run")
+                result_data["status"] = "skip"
                 
             # Validate total counts
-            if total_test_cases > 0 and (success_count + failure_count) != total_test_cases:
-                add_log_entry(f"Warning: Test count mismatch - Total cases: {total_test_cases}, Passed: {success_count}, Failed: {failure_count}", level="WARNING")
+            if total_test_cases > 0 and (success_count + failure_count + result_data["tests"]["skipped"]) != total_test_cases:
+                add_log_entry(f"Warning: Test count mismatch - Total cases: {total_test_cases}, Passed: {success_count}, Failed: {failure_count}, Skipped: {result_data['tests']['skipped']}", level="WARNING")
         
         # Generate summary
         end_time = time.time()
