@@ -311,7 +311,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             shutil.copy(requirements_in_path, compiled_requirements_path)
             
         # Check if pyproject.toml already exists in the original repo
-        original_pyproject_path = repo_path / "pyproject.toml"
+        original_pyproject_path = working_dir / "pyproject.toml"
         project_already_initialized = original_pyproject_path.exists()
         
         # If pyproject.toml exists in the original repo, copy it to the project directory
