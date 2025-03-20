@@ -820,13 +820,15 @@ def process_repo_list(args: argparse.Namespace) -> int:
     # Create a pool of worker processes
     with multiprocessing.Pool(processes=args.num_workers) as pool:
         # Process repositories in parallel with progress bar
-        results = list(tqdm(
-            pool.imap(_process_repo_wrapper, arg_tuples),
-            total=len(repo_infos),
-            desc="Processing repositories",
-            unit="repo",
-            disable=None  # This will show the progress bar even when not verbose
-        ))
+        pbar = tqdm(total=len(repo_infos), desc="Processing repositories", unit="repo")
+        results = []
+        
+        # Use imap_unordered for better real-time progress updates
+        for result in pool.imap_unordered(_process_repo_wrapper, arg_tuples):
+            results.append(result)
+            pbar.update(1)
+        
+        pbar.close()
     
     # Check if any process failed
     return 1 if any(result != 0 for result in results) else 0
@@ -865,13 +867,15 @@ def process_local_list(args: argparse.Namespace) -> int:
     # Create a pool of worker processes
     with multiprocessing.Pool(processes=args.num_workers) as pool:
         # Process directories in parallel with progress bar
-        results = list(tqdm(
-            pool.imap(_process_local_wrapper, arg_tuples),
-            total=len(dir_paths),
-            desc="Processing directories",
-            unit="dir",
-            disable=None  # This will show the progress bar even when not verbose
-        ))
+        pbar = tqdm(total=len(dir_paths), desc="Processing directories", unit="dir")
+        results = []
+        
+        # Use imap_unordered for better real-time progress updates
+        for result in pool.imap_unordered(_process_local_wrapper, arg_tuples):
+            results.append(result)
+            pbar.update(1)
+        
+        pbar.close()
     
     # Check if any process failed
     return 1 if any(result != 0 for result in results) else 0
