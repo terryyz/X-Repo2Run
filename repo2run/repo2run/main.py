@@ -25,7 +25,7 @@ Options:
     --local-list FILE      Text file containing list of local directories
     --output-dir DIR       Directory to store output files (default: output)
     --workspace-dir DIR    Directory to use as workspace (default: temporary directory)
-    --timeout SECONDS      Timeout in seconds (default: 7200 - 2 hours)
+    --timeout SECONDS      Timeout in seconds (default: 7200 - 2 hours). Tests that exceed this time will be forcibly terminated.
     --verbose             Enable verbose logging
     --overwrite           Overwrite existing output directory if it exists
     --use-uv             Use UV for dependency management (default: False, use pip/venv)
@@ -107,7 +107,7 @@ def parse_arguments():
         '--timeout', 
         type=int, 
         default=7200,
-        help='Timeout in seconds (default: 7200 - 2 hours)'
+        help='Timeout in seconds (default: 7200 - 2 hours). Tests that exceed this time will be forcibly terminated.'
     )
     parser.add_argument(
         '--verbose', 
@@ -236,13 +236,22 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             elapsed_time = time.time() - start_time
             if elapsed_time > args.timeout:
                 logger.error(f"Process exceeded timeout of {args.timeout} seconds")
-                # Force exit this process
+                # Force exit this process with a more direct approach
                 os._exit(1)
-            time.sleep(10)  # Check every 10 seconds
+            time.sleep(1)  # Check more frequently (every 1 second)
     
     # Start the timeout handler in a separate thread
     timeout_thread = threading.Thread(target=timeout_handler, daemon=True)
     timeout_thread.start()
+    
+    # Create a timer that will terminate the process after the timeout
+    # This is a backup mechanism in case the thread-based timeout fails
+    timer = threading.Timer(args.timeout, lambda: (
+        logger.error(f"Process hard timeout after {args.timeout} seconds"),
+        os._exit(1)
+    ))
+    timer.daemon = True
+    timer.start()
     
     # Create output directory
     output_dir = Path(args.output_dir)
@@ -878,11 +887,19 @@ def _process_repo_wrapper(args_and_repo):
             if time.time() - start_time > args.timeout:
                 logger.error(f"Process exceeded timeout of {args.timeout} seconds")
                 os._exit(1)  # Force exit this process
-            time.sleep(10)  # Check every 10 seconds
+            time.sleep(1)  # Check more frequently
     
     # Start timeout checker in a separate thread
     timeout_thread = threading.Thread(target=timeout_checker, daemon=True)
     timeout_thread.start()
+    
+    # Create a hard timer to terminate process after timeout
+    timer = threading.Timer(args.timeout, lambda: (
+        logger.error(f"Process hard timeout after {args.timeout} seconds"),
+        os._exit(1)
+    ))
+    timer.daemon = True
+    timer.start()
     
     return process_single_repo(args, repo_info, None)
 
@@ -906,11 +923,19 @@ def _process_local_wrapper(args_and_path):
             if time.time() - start_time > args.timeout:
                 logger.error(f"Process exceeded timeout of {args.timeout} seconds")
                 os._exit(1)  # Force exit this process
-            time.sleep(10)  # Check every 10 seconds
+            time.sleep(1)  # Check more frequently
     
     # Start timeout checker in a separate thread
     timeout_thread = threading.Thread(target=timeout_checker, daemon=True)
     timeout_thread.start()
+    
+    # Create a hard timer to terminate process after timeout
+    timer = threading.Timer(args.timeout, lambda: (
+        logger.error(f"Process hard timeout after {args.timeout} seconds"),
+        os._exit(1)
+    ))
+    timer.daemon = True
+    timer.start()
     
     return process_single_repo(args, None, local_path)
 

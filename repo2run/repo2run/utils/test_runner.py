@@ -55,6 +55,12 @@ class TestRunner:
             self.venv_path = Path(venv_path)
         
         self.logger = logger or logging.getLogger(__name__)
+        
+        # Log the timeout setting for debugging
+        if self.timeout:
+            self.logger.info(f"TestRunner initialized with timeout: {self.timeout} seconds")
+        else:
+            self.logger.info("TestRunner initialized with no timeout setting")
     
     def find_tests(self):
         """
@@ -588,6 +594,10 @@ class TestRunner:
             self.logger.info(f"Running collect-only command: {' '.join(collect_cmd)}")
             
             try:
+                # Log timeout before collection if it's set
+                if self.timeout:
+                    self.logger.info(f"Using timeout of {self.timeout} seconds for test collection")
+                
                 collect_result = subprocess.run(
                     collect_cmd,
                     check=False,
@@ -684,6 +694,21 @@ class TestRunner:
             self.logger.info(f"Running command from {self.repo_path}: {' '.join(cmd)}")
             
             try:
+                # Log timeout before execution if it's set
+                if self.timeout:
+                    self.logger.info(f"Using timeout of {self.timeout} seconds for test execution")
+                    
+                # For tests that might be complex or stuck, create a more robust timeout mechanism 
+                # with a bit of safety margin to allow the normal timeout to work
+                safety_timeout = self.timeout + 10
+                import threading
+                timer = threading.Timer(safety_timeout, lambda: (
+                    self.logger.error(f"Hard timeout after {safety_timeout} seconds, terminating test process"),
+                    os._exit(1)
+                ))
+                timer.daemon = True
+                timer.start()
+                
                 result = subprocess.run(
                     cmd,
                     check=False,
@@ -691,6 +716,10 @@ class TestRunner:
                     text=True,
                     timeout=self.timeout  # Apply timeout to test running
                 )
+                
+                # Cancel the safety timer if we got here successfully
+                if self.timeout and 'timer' in locals():
+                    timer.cancel()
                 
                 # Log more details about the test run output
                 if "collected 0 items" in result.stdout:
@@ -731,7 +760,16 @@ class TestRunner:
                 }
             except subprocess.TimeoutExpired as e:
                 self.logger.error(f"Test execution timed out after {self.timeout} seconds")
-                return {
+                # Cancel any safety timer to prevent duplicate termination
+                if 'timer' in locals():
+                    timer.cancel()
+                    
+                # Force exit to prevent hanging processes
+                import os, sys
+                self.logger.error("Timeout reached - forcing process termination")
+                
+                # Return result before exiting
+                result = {
                     "tests_found": len(test_files),
                     "tests_passed": 0,
                     "tests_failed": len(test_files),
@@ -751,6 +789,13 @@ class TestRunner:
                         "stderr": e.stderr if e.stderr else ""
                     }
                 }
+                
+                # Exit with an error code but after returning the result
+                # Use os._exit(1) to force exit the process
+                # We need to delay the exit to allow the result to be returned
+                threading.Timer(1.0, lambda: os._exit(1)).start()
+                
+                return result
             except Exception as e:
                 self.logger.error(f"Error running tests: {str(e)}")
                 return {
