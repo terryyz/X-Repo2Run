@@ -11,12 +11,12 @@ This script handles the workflow of:
 
 Usage:
     # Single repository/directory mode:
-    repo2run --repo user/repo sha --output-dir output_path [--overwrite] [--verbose]
-    repo2run --local path/to/repo --output-dir output_path [--overwrite] [--verbose]
+    repo2run --repo user/repo sha --output-dir output_path [--overwrite] [--verbose] [--skip-processed]
+    repo2run --local path/to/repo --output-dir output_path [--overwrite] [--verbose] [--skip-processed]
 
     # Multiprocessing mode:
-    repo2run --repo-list repos.txt --output-dir output_path [--overwrite] [--verbose] [--num-workers N]
-    repo2run --local-list dirs.txt --output-dir output_path [--overwrite] [--verbose] [--num-workers N]
+    repo2run --repo-list repos.txt --output-dir output_path [--overwrite] [--verbose] [--num-workers N] [--skip-processed]
+    repo2run --local-list dirs.txt --output-dir output_path [--overwrite] [--verbose] [--num-workers N] [--skip-processed]
 
 Options:
     --repo FULL_NAME SHA    The full name of the repository (e.g., user/repo) and SHA
@@ -31,6 +31,7 @@ Options:
     --use-uv             Use UV for dependency management (default: False, use pip/venv)
     --num-workers N       Number of worker processes for parallel processing (default: number of CPU cores)
     --collect-only      Only collect test cases without installing dependencies or running tests
+    --skip-processed    Skip repositories that have already been processed (default: False)
 """
 
 import argparse
@@ -44,9 +45,10 @@ import datetime
 import multiprocessing
 import logging
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Set
 from tqdm import tqdm
 import re
+import threading
 
 from repo2run.utils.repo_manager import RepoManager
 from repo2run.utils.dependency_extractor import DependencyExtractor
@@ -133,8 +135,82 @@ def parse_arguments():
         action='store_true',
         help='Only collect test cases without installing dependencies or running tests'
     )
+    parser.add_argument(
+        '--skip-processed',
+        action='store_true',
+        help='Skip repositories that have already been processed (default: False)'
+    )
     
     return parser.parse_args()
+
+
+def has_repo_been_processed(results_jsonl_path: Path, repo_identifier: str) -> bool:
+    """Check if the repository has already been processed by looking in results.jsonl.
+    
+    Args:
+        results_jsonl_path: Path to the results.jsonl file
+        repo_identifier: The unique identifier for the repository
+    
+    Returns:
+        bool: True if the repository has been processed, False otherwise
+    """
+    if not results_jsonl_path.exists():
+        return False
+    
+    try:
+        with open(results_jsonl_path, 'r') as f:
+            for line in f:
+                try:
+                    result = json.loads(line.strip())
+                    # Check if this result matches our repo - repository field stores the path or GitHub repo@sha
+                    if result.get("repository") == repo_identifier:
+                        # Only consider it processed if it has a final status (not "running")
+                        if result.get("status") != "running":
+                            return True
+                except json.JSONDecodeError:
+                    # Skip invalid lines
+                    continue
+    except Exception:
+        # If we can't read the file for any reason, assume the repo hasn't been processed
+        return False
+    
+    return False
+
+
+def get_processed_repos(results_jsonl_path: Path) -> Set[str]:
+    """Get a set of all repository identifiers that have already been processed.
+    
+    The "repository" field in results.jsonl contains:
+     - For GitHub repos: "username/repo@sha"
+     - For local directories: The absolute path to the directory
+    
+    Args:
+        results_jsonl_path: Path to the results.jsonl file
+    
+    Returns:
+        Set[str]: Set of repository identifiers that have been processed
+    """
+    processed_repos = set()
+    
+    if not results_jsonl_path.exists():
+        return processed_repos
+    
+    try:
+        with open(results_jsonl_path, 'r') as f:
+            for line in f:
+                try:
+                    result = json.loads(line.strip())
+                    # Only consider it processed if it has a final status (not "running")
+                    if result.get("status") != "running" and "repository" in result:
+                        processed_repos.add(result.get("repository"))
+                except json.JSONDecodeError:
+                    # Skip invalid lines
+                    continue
+    except Exception:
+        # If we can't read the file for any reason, return an empty set
+        return set()
+    
+    return processed_repos
 
 
 def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str, str]] = None, local_path: Optional[str] = None) -> int:
@@ -154,6 +230,20 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
     # Configure logging for this process
     logger = configure_process_logging(args.verbose)
     
+    # Set up a global timeout to ensure this process doesn't exceed the timeout
+    def timeout_handler():
+        while True:
+            elapsed_time = time.time() - start_time
+            if elapsed_time > args.timeout:
+                logger.error(f"Process exceeded timeout of {args.timeout} seconds")
+                # Force exit this process
+                os._exit(1)
+            time.sleep(10)  # Check every 10 seconds
+    
+    # Start the timeout handler in a separate thread
+    timeout_thread = threading.Thread(target=timeout_handler, daemon=True)
+    timeout_thread.start()
+    
     # Create output directory
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -164,9 +254,23 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
     # Initialize results.jsonl file
     results_jsonl_path = output_dir / "results.jsonl"
     
+    # Pre-determine repo identifier for checking if it's already processed
+    repo_identifier = None
+    if repo_info:
+        full_name, sha = repo_info
+        repo_identifier = f"{full_name}@{sha}"
+    elif local_path:
+        local_path_resolved = Path(local_path).resolve()
+        repo_identifier = str(local_path_resolved)
+    
+    # Check if we should skip this repository (already processed)
+    if repo_identifier and args.skip_processed and has_repo_been_processed(results_jsonl_path, repo_identifier) and not args.overwrite:
+        logger.info(f"Skipping already processed repository: {repo_identifier}")
+        return 0
+    
     # Initialize result data structure with temporary values - will update repository later
     result_data = {
-        "repository": "pending",  # Will be updated after repo is initialized
+        "repository": repo_identifier if repo_identifier else "pending",  # Set repository identifier immediately if we have it
         "status": "running",
         "configuration": {
             "output_directory": str(output_dir),
@@ -221,25 +325,26 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             working_dir = repo_manager.clone_repository(full_name, sha)
             repo_name = working_dir.name
             add_log_entry(f"Cloned repository {full_name} at {sha}", repo_name=repo_name)
-            # Update the repository field to the original input path (GitHub repo path with SHA)
-            result_data["repository"] = f"{full_name}@{sha}"
-            # Store the repo identifier for output directory name
-            repo_identifier = f"{full_name.replace('/', '_')}_{sha[:7]}"  # Use shorter SHA
+            # We already set result_data["repository"] = f"{full_name}@{sha}" earlier,
+            # so this consistent with our check for existing repositories
+            # Store the repo_identifier for directory name separately
+            dir_identifier = f"{full_name.replace('/', '_')}_{sha[:7]}"  # Use shorter SHA
+            result_data["repository_identifier"] = dir_identifier
         else:
             local_path = Path(local_path).resolve()
             working_dir = repo_manager.setup_local_repository(local_path)
             repo_name = working_dir.name
             add_log_entry(f"Set up local repository from {local_path}", repo_name=repo_name)
-            # Update the repository field to the original input path
-            result_data["repository"] = str(local_path)
+            # We've already set result_data["repository"] = str(local_path) earlier,
+            # so this is consistent with our check for existing repositories
             # Use repo name for the output directory
-            repo_identifier = repo_name
+            dir_identifier = repo_name
+            result_data["repository_identifier"] = dir_identifier
         
-        # Store the repo_identifier separately for use in creating directories
-        result_data["repository_identifier"] = repo_identifier
+        # Store the project directory for reference
         result_data["project_directory"] = str(working_dir)
         
-        add_log_entry(f"Using project identifier: {repo_identifier}")
+        add_log_entry(f"Using project identifier: {dir_identifier}")
         add_log_entry(f"Project will be processed in: {working_dir}")
         
         # Extract dependencies - use working_dir
@@ -566,7 +671,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             add_log_entry("Running in collect-only mode", level="INFO")
             
             # Run test collection
-            test_runner = TestRunner(working_dir, venv_path=venv_path, use_uv=args.use_uv, logger=logger)
+            test_runner = TestRunner(working_dir, venv_path=venv_path, use_uv=args.use_uv, logger=logger, timeout=args.timeout)
             
             # Collect tests
             try:
@@ -602,7 +707,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
                 return 1
         
         # Run tests
-        test_runner = TestRunner(working_dir, venv_path=venv_path, use_uv=args.use_uv, logger=logger)
+        test_runner = TestRunner(working_dir, venv_path=venv_path, use_uv=args.use_uv, logger=logger, timeout=args.timeout)
         add_log_entry("Looking for tests in the project's code (excluding virtual environment)")
         
         # Check for project-specific tests first
@@ -765,6 +870,20 @@ def _process_repo_wrapper(args_and_repo):
     """
     args, repo_info = args_and_repo
     logger = configure_process_logging(args.verbose)
+    
+    # Set up process timeout - this ensures the process doesn't run forever
+    start_time = time.time()
+    def timeout_checker():
+        while True:
+            if time.time() - start_time > args.timeout:
+                logger.error(f"Process exceeded timeout of {args.timeout} seconds")
+                os._exit(1)  # Force exit this process
+            time.sleep(10)  # Check every 10 seconds
+    
+    # Start timeout checker in a separate thread
+    timeout_thread = threading.Thread(target=timeout_checker, daemon=True)
+    timeout_thread.start()
+    
     return process_single_repo(args, repo_info, None)
 
 
@@ -779,6 +898,20 @@ def _process_local_wrapper(args_and_path):
     """
     args, local_path = args_and_path
     logger = configure_process_logging(args.verbose)
+    
+    # Set up process timeout - this ensures the process doesn't run forever
+    start_time = time.time()
+    def timeout_checker():
+        while True:
+            if time.time() - start_time > args.timeout:
+                logger.error(f"Process exceeded timeout of {args.timeout} seconds")
+                os._exit(1)  # Force exit this process
+            time.sleep(10)  # Check every 10 seconds
+    
+    # Start timeout checker in a separate thread
+    timeout_thread = threading.Thread(target=timeout_checker, daemon=True)
+    timeout_thread.start()
+    
     return process_single_repo(args, None, local_path)
 
 
@@ -813,6 +946,31 @@ def process_repo_list(args: argparse.Namespace) -> int:
     if not repo_infos:
         logger.error("No valid repositories found in the list")
         return 1
+    
+    # If the output directory exists, get a list of already processed repositories
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    results_jsonl_path = output_dir / "results.jsonl"
+    
+    if args.skip_processed and not args.overwrite and results_jsonl_path.exists():
+        processed_repos = get_processed_repos(results_jsonl_path)
+        logger.info(f"Found {len(processed_repos)} already processed repositories")
+        
+        # Filter out already processed repositories
+        filtered_repo_infos = []
+        for full_name, sha in repo_infos:
+            repo_identifier = f"{full_name}@{sha}"
+            if repo_identifier not in processed_repos:
+                filtered_repo_infos.append((full_name, sha))
+            else:
+                logger.info(f"Skipping already processed repository: {repo_identifier}")
+        
+        logger.info(f"Processing {len(filtered_repo_infos)} out of {len(repo_infos)} repositories (skipping {len(repo_infos) - len(filtered_repo_infos)} already processed)")
+        repo_infos = filtered_repo_infos
+    
+    if not repo_infos:
+        logger.info("All repositories have already been processed")
+        return 0
     
     # Create argument tuples for the wrapper function
     arg_tuples = [(args, repo_info) for repo_info in repo_infos]
@@ -861,6 +1019,31 @@ def process_local_list(args: argparse.Namespace) -> int:
         logger.error("No valid directories found in the list")
         return 1
     
+    # If the output directory exists, get a list of already processed repositories
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    results_jsonl_path = output_dir / "results.jsonl"
+    
+    if args.skip_processed and not args.overwrite and results_jsonl_path.exists():
+        processed_repos = get_processed_repos(results_jsonl_path)
+        logger.info(f"Found {len(processed_repos)} already processed repositories")
+        
+        # Filter out already processed repositories
+        filtered_dir_paths = []
+        for dir_path in dir_paths:
+            repo_identifier = str(Path(dir_path).resolve())
+            if repo_identifier not in processed_repos:
+                filtered_dir_paths.append(dir_path)
+            else:
+                logger.info(f"Skipping already processed directory: {repo_identifier}")
+        
+        logger.info(f"Processing {len(filtered_dir_paths)} out of {len(dir_paths)} directories (skipping {len(dir_paths) - len(filtered_dir_paths)} already processed)")
+        dir_paths = filtered_dir_paths
+    
+    if not dir_paths:
+        logger.info("All directories have already been processed")
+        return 0
+    
     # Create argument tuples for the wrapper function
     arg_tuples = [(args, dir_path) for dir_path in dir_paths]
     
@@ -900,12 +1083,6 @@ def main():
 
 
 if __name__ == "__main__":
-    # Set up timeout
-    def timeout_handler():
-        time.sleep(7200)  # Default 2 hour timeout
-        print("Timeout reached. Exiting.")
-        sys.exit(1)
-    
     # Clean up any dangling Docker images
     try:
         subprocess.run(

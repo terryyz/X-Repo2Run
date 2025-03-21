@@ -34,7 +34,7 @@ class TestRunner:
     Finds and runs tests in a repository.
     """
     
-    def __init__(self, repo_path, venv_path=None, use_uv=True, logger=None):
+    def __init__(self, repo_path, venv_path=None, use_uv=True, logger=None, timeout=None):
         """
         Initialize the test runner.
         
@@ -43,9 +43,11 @@ class TestRunner:
             venv_path (Path, optional): Path to the virtual environment. If None, a default path is used.
             use_uv (bool): Whether to use UV for package management. If False, use pip/venv.
             logger (logging.Logger, optional): Logger instance. If None, a new logger is created.
+            timeout (int, optional): Timeout in seconds for test processes. If None, no timeout is applied.
         """
         self.repo_path = Path(repo_path)
         self.use_uv = use_uv
+        self.timeout = timeout
         
         if venv_path is None:
             self.venv_path = self.repo_path / '.venv'
@@ -384,7 +386,7 @@ class TestRunner:
         self.logger.info(f"Using repository root: {self.repo_path}")
         return self.repo_path
     
-    def _run_in_venv(self, command, cwd=None, env=None):
+    def _run_in_venv(self, command, cwd=None, env=None, timeout=None):
         """
         Run a command in the virtual environment.
         
@@ -392,6 +394,7 @@ class TestRunner:
             command (list): Command to run.
             cwd (Path, optional): Working directory. If None, the repository root is used.
             env (dict, optional): Environment variables. If None, the current environment is used.
+            timeout (int, optional): Timeout in seconds for the command. If None, no timeout is applied.
         
         Returns:
             dict: Dictionary with command result.
@@ -421,7 +424,8 @@ class TestRunner:
                 env=env,
                 check=False,
                 capture_output=True,
-                text=True
+                text=True,
+                timeout=timeout  # Apply timeout if provided
             )
             
             return {
@@ -429,6 +433,16 @@ class TestRunner:
                 "returncode": result.returncode,
                 "stdout": result.stdout,
                 "stderr": result.stderr
+            }
+        except subprocess.TimeoutExpired as e:
+            self.logger.error(f"Command timed out after {timeout} seconds: {' '.join(command)}")
+            return {
+                "success": False,
+                "error": f"Command timed out after {timeout} seconds",
+                "returncode": -1,
+                "stdout": e.stdout if e.stdout else "",
+                "stderr": e.stderr if e.stderr else "",
+                "timeout": True  # Add a flag to indicate timeout
             }
         except Exception as e:
             self.logger.error(f"Error running command: {str(e)}")
@@ -573,36 +587,56 @@ class TestRunner:
             collect_cmd.extend(relative_test_files)
             self.logger.info(f"Running collect-only command: {' '.join(collect_cmd)}")
             
-            collect_result = subprocess.run(
-                collect_cmd,
-                check=False,
-                capture_output=True,
-                text=True
-            )
-            
-            # Check if any test functions were found
-            no_tests_found = "collected 0 items" in collect_result.stdout
-            if no_tests_found:
-                self.logger.warning("No actual test functions found in the test files")
-                self.logger.warning("Pytest collection output: " + collect_result.stdout[:500])  # Log a part of the output
+            try:
+                collect_result = subprocess.run(
+                    collect_cmd,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout  # Apply timeout to collection
+                )
                 
-                # Return early with appropriate status
+                # Check if any test functions were found
+                no_tests_found = "collected 0 items" in collect_result.stdout
+                if no_tests_found:
+                    self.logger.warning("No actual test functions found in the test files")
+                    self.logger.warning("Pytest collection output: " + collect_result.stdout[:500])  # Log a part of the output
+                    
+                    # Return early with appropriate status
+                    return {
+                        "tests_found": len(test_files),
+                        "tests_passed": 0,
+                        "tests_failed": 0,
+                        "tests_skipped": len(test_files),
+                        "test_results": [
+                            {
+                                "name": str(f.relative_to(self.repo_path)),
+                                "status": "skipped",
+                                "message": "No test functions found in this file"
+                            } for f in test_files
+                        ],
+                        "status": "skipped",
+                        "warning": "Files found with test-like names, but no pytest test functions detected",
+                        "collect_stdout": collect_result.stdout,
+                        "collect_stderr": collect_result.stderr
+                    }
+            except subprocess.TimeoutExpired as e:
+                self.logger.error(f"Test collection timed out after {self.timeout} seconds")
                 return {
                     "tests_found": len(test_files),
                     "tests_passed": 0,
-                    "tests_failed": 0,
-                    "tests_skipped": len(test_files),
+                    "tests_failed": len(test_files),
+                    "tests_skipped": 0,
                     "test_results": [
                         {
                             "name": str(f.relative_to(self.repo_path)),
-                            "status": "skipped",
-                            "message": "No test functions found in this file"
+                            "status": "error",
+                            "message": f"Test collection timed out after {self.timeout} seconds"
                         } for f in test_files
                     ],
-                    "status": "skipped",
-                    "warning": "Files found with test-like names, but no pytest test functions detected",
-                    "collect_stdout": collect_result.stdout,
-                    "collect_stderr": collect_result.stderr
+                    "status": "timeout",
+                    "error": f"Test collection timed out after {self.timeout} seconds",
+                    "timeout": True
                 }
         except Exception as e:
             self.logger.error(f"Error during test collection: {str(e)}")
@@ -649,61 +683,85 @@ class TestRunner:
             # Run the tests
             self.logger.info(f"Running command from {self.repo_path}: {' '.join(cmd)}")
             
-            result = subprocess.run(
-                cmd,
-                check=False,
-                capture_output=True,
-                text=True
-            )
-            
-            # Log more details about the test run output
-            if "collected 0 items" in result.stdout:
-                self.logger.warning("Pytest reported 'collected 0 items' - no actual tests were run")
-            
-            # Store raw output for debugging
-            test_output = {
-                "stdout": result.stdout,
-                "stderr": result.stderr
-            }
-            
-            # Parse test results
-            tests_found, tests_passed, tests_failed, tests_skipped, test_results = self._parse_test_results(result.stdout, result.stderr)
-            
-            self.logger.info(f"Tests found: {tests_found}, passed: {tests_passed}, failed: {tests_failed}, skipped: {tests_skipped}")
-            
-            status = "success"
-            if "collected 0 items" in result.stdout:
-                status = "skipped"
-                self.logger.warning("Setting status to 'skipped' because no actual test functions were found")
-            elif tests_failed > 0:
-                # Set status based on whether any tests passed
-                if tests_passed > 0:
-                    status = "partial_success"
-                    self.logger.info(f"Setting status to 'partial_success' because {tests_passed} tests passed and {tests_failed} tests failed")
-                else:
-                    status = "failure"
-                    self.logger.info(f"Setting status to 'failure' because all {tests_failed} tests failed")
-            
-            return {
-                "tests_found": tests_found,
-                "tests_passed": tests_passed,
-                "tests_failed": tests_failed,
-                "tests_skipped": tests_skipped,
-                "test_results": test_results,
-                "status": status,
-                "test_output": test_output
-            }
-        except Exception as e:
-            self.logger.error(f"Error running tests: {str(e)}")
-            return {
-                "tests_found": len(test_files),
-                "tests_passed": 0,
-                "tests_failed": len(test_files),
-                "tests_skipped": 0,
-                "test_results": [{"name": str(f.relative_to(self.repo_path)), "status": "error", "message": str(e)} for f in test_files],
-                "status": "error",
-                "error": str(e)
-            }
+            try:
+                result = subprocess.run(
+                    cmd,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout  # Apply timeout to test running
+                )
+                
+                # Log more details about the test run output
+                if "collected 0 items" in result.stdout:
+                    self.logger.warning("Pytest reported 'collected 0 items' - no actual tests were run")
+                
+                # Store raw output for debugging
+                test_output = {
+                    "stdout": result.stdout,
+                    "stderr": result.stderr
+                }
+                
+                # Parse test results
+                tests_found, tests_passed, tests_failed, tests_skipped, test_results = self._parse_test_results(result.stdout, result.stderr)
+                
+                self.logger.info(f"Tests found: {tests_found}, passed: {tests_passed}, failed: {tests_failed}, skipped: {tests_skipped}")
+                
+                status = "success"
+                if "collected 0 items" in result.stdout:
+                    status = "skipped"
+                    self.logger.warning("Setting status to 'skipped' because no actual test functions were found")
+                elif tests_failed > 0:
+                    # Set status based on whether any tests passed
+                    if tests_passed > 0:
+                        status = "partial_success"
+                        self.logger.info(f"Setting status to 'partial_success' because {tests_passed} tests passed and {tests_failed} tests failed")
+                    else:
+                        status = "failure"
+                        self.logger.info(f"Setting status to 'failure' because all {tests_failed} tests failed")
+                
+                return {
+                    "tests_found": tests_found,
+                    "tests_passed": tests_passed,
+                    "tests_failed": tests_failed,
+                    "tests_skipped": tests_skipped,
+                    "test_results": test_results,
+                    "status": status,
+                    "test_output": test_output
+                }
+            except subprocess.TimeoutExpired as e:
+                self.logger.error(f"Test execution timed out after {self.timeout} seconds")
+                return {
+                    "tests_found": len(test_files),
+                    "tests_passed": 0,
+                    "tests_failed": len(test_files),
+                    "tests_skipped": 0,
+                    "test_results": [
+                        {
+                            "name": str(f.relative_to(self.repo_path)),
+                            "status": "error",
+                            "message": f"Test execution timed out after {self.timeout} seconds"
+                        } for f in test_files
+                    ],
+                    "status": "timeout",
+                    "error": f"Test execution timed out after {self.timeout} seconds",
+                    "timeout": True,
+                    "test_output": {
+                        "stdout": e.stdout if e.stdout else "",
+                        "stderr": e.stderr if e.stderr else ""
+                    }
+                }
+            except Exception as e:
+                self.logger.error(f"Error running tests: {str(e)}")
+                return {
+                    "tests_found": len(test_files),
+                    "tests_passed": 0,
+                    "tests_failed": len(test_files),
+                    "tests_skipped": 0,
+                    "test_results": [{"name": str(f.relative_to(self.repo_path)), "status": "error", "message": str(e)} for f in test_files],
+                    "status": "error",
+                    "error": str(e)
+                }
         finally:
             # Change back to the original directory
             os.chdir(current_dir)
