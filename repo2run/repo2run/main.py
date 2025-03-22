@@ -246,10 +246,11 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
     
     # Create a timer that will terminate the process after the timeout
     # This is a backup mechanism in case the thread-based timeout fails
-    timer = threading.Timer(args.timeout, lambda: (
-        logger.error(f"Process hard timeout after {args.timeout} seconds"),
+    def hard_timeout_handler():
+        logger.error(f"Process hard timeout after {args.timeout} seconds")
         os._exit(1)
-    ))
+    
+    timer = threading.Timer(args.timeout, hard_timeout_handler)
     timer.daemon = True
     timer.start()
     
@@ -430,10 +431,11 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         project_already_initialized = original_pyproject_path.exists()
         
         # If pyproject.toml exists in the original repo, copy it to the project directory
-        if project_already_initialized:
+        if project_already_initialized and original_pyproject_path != pyproject_path:
             shutil.copy(original_pyproject_path, pyproject_path)
             add_log_entry(f"Copied existing pyproject.toml to {pyproject_path}")
-        
+        elif project_already_initialized:
+            add_log_entry(f"Using existing pyproject.toml at {pyproject_path}")
         # Initialize installation_results with a default empty list
         installation_results = []
         
@@ -894,10 +896,11 @@ def _process_repo_wrapper(args_and_repo):
     timeout_thread.start()
     
     # Create a hard timer to terminate process after timeout
-    timer = threading.Timer(args.timeout, lambda: (
-        logger.error(f"Process hard timeout after {args.timeout} seconds"),
+    def hard_timeout_handler():
+        logger.error(f"Process hard timeout after {args.timeout} seconds")
         os._exit(1)
-    ))
+    
+    timer = threading.Timer(args.timeout, hard_timeout_handler)
     timer.daemon = True
     timer.start()
     
@@ -930,10 +933,11 @@ def _process_local_wrapper(args_and_path):
     timeout_thread.start()
     
     # Create a hard timer to terminate process after timeout
-    timer = threading.Timer(args.timeout, lambda: (
-        logger.error(f"Process hard timeout after {args.timeout} seconds"),
+    def hard_timeout_handler():
+        logger.error(f"Process hard timeout after {args.timeout} seconds")
         os._exit(1)
-    ))
+    
+    timer = threading.Timer(args.timeout, hard_timeout_handler)
     timer.daemon = True
     timer.start()
     

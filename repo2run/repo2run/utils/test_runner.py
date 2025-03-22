@@ -793,7 +793,11 @@ class TestRunner:
                 # Exit with an error code but after returning the result
                 # Use os._exit(1) to force exit the process
                 # We need to delay the exit to allow the result to be returned
-                threading.Timer(1.0, lambda: os._exit(1)).start()
+                def exit_handler():
+                    os._exit(1)
+                    
+                threading.Timer(1.0, exit_handler).start()
+
                 
                 return result
             except Exception as e:
