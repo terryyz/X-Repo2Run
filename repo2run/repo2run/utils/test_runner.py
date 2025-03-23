@@ -10,6 +10,7 @@ import re
 import subprocess
 from pathlib import Path
 import sys
+import threading
 from contextlib import contextmanager
 
 
@@ -701,11 +702,11 @@ class TestRunner:
                 # For tests that might be complex or stuck, create a more robust timeout mechanism 
                 # with a bit of safety margin to allow the normal timeout to work
                 safety_timeout = self.timeout + 10
-                import threading
-                timer = threading.Timer(safety_timeout, lambda: (
-                    self.logger.error(f"Hard timeout after {safety_timeout} seconds, terminating test process"),
+                def hard_timeout_handler():
+                    self.logger.error(f"Process hard timeout after {self.timeout} seconds")
                     os._exit(1)
-                ))
+                
+                timer = threading.Timer(safety_timeout, hard_timeout_handler)
                 timer.daemon = True
                 timer.start()
                 
@@ -765,7 +766,6 @@ class TestRunner:
                     timer.cancel()
                     
                 # Force exit to prevent hanging processes
-                import os, sys
                 self.logger.error("Timeout reached - forcing process termination")
                 
                 # Return result before exiting
