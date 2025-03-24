@@ -196,19 +196,48 @@ def get_processed_repos(results_jsonl_path: Path) -> Set[str]:
         return processed_repos
     
     try:
+        # Use a larger buffer size for reading large files more efficiently
+        # Read the file in chunks of 1MB instead of line by line
+        buffer_size = 1024 * 1024  # 1MB
+        
         with open(results_jsonl_path, 'r') as f:
-            for line in f:
+            partial_line = ""
+            while True:
+                chunk = f.read(buffer_size)
+                if not chunk:
+                    break
+                
+                # Add any leftover partial line from previous chunk
+                chunk = partial_line + chunk
+                lines = chunk.split('\n')
+                
+                # Save the last line which might be incomplete
+                partial_line = lines.pop() if lines else ""
+                
+                for line in lines:
+                    if not line.strip():
+                        continue
+                    try:
+                        result = json.loads(line.strip())
+                        # Only consider it processed if it has a final status (not "running")
+                        if result.get("status") != "running" and "repository" in result:
+                            processed_repos.add(result.get("repository"))
+                    except json.JSONDecodeError:
+                        # Skip invalid lines
+                        continue
+            
+            # Process the final partial line if it's a complete JSON
+            if partial_line.strip():
                 try:
-                    result = json.loads(line.strip())
-                    # Only consider it processed if it has a final status (not "running")
+                    result = json.loads(partial_line.strip())
                     if result.get("status") != "running" and "repository" in result:
                         processed_repos.add(result.get("repository"))
                 except json.JSONDecodeError:
-                    # Skip invalid lines
-                    continue
-    except Exception:
-        # If we can't read the file for any reason, return an empty set
-        return set()
+                    pass
+                    
+    except Exception as e:
+        # Log the error but return what we've processed so far
+        print(f"Error reading results file: {e}")
     
     return processed_repos
 
@@ -273,8 +302,12 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         local_path_resolved = Path(local_path).resolve()
         repo_identifier = str(local_path_resolved)
     
-    # Check if we should skip this repository (already processed)
-    if repo_identifier and args.skip_processed and has_repo_been_processed(results_jsonl_path, repo_identifier) and not args.overwrite:
+    # We no longer need to check if the repository is already processed here
+    # because it's already filtered out in the main process when using --skip-processed
+    # Only check in single repo mode (when called directly, not via the worker pool)
+    # Check by the presence of args.repo_list or args.local_list attributes if this is called from a pool
+    if (repo_identifier and args.skip_processed and not args.overwrite and 
+            not hasattr(args, '_is_from_pool') and has_repo_been_processed(results_jsonl_path, repo_identifier)):
         logger.info(f"Skipping already processed repository: {repo_identifier}")
         return 0
     
@@ -870,6 +903,90 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         return 1
 
 
+def _process_repo_wrapper(args_and_repo):
+    """Helper function to process a single repository in multiprocessing.
+    
+    Args:
+        args_and_repo (tuple): Tuple containing (args, repo_info)
+        
+    Returns:
+        int: Exit code from process_single_repo
+    """
+    args, repo_info = args_and_repo
+    # Clone args to avoid modifying the original
+    args_copy = argparse.Namespace(**vars(args))
+    # Mark this args object as coming from a pool
+    args_copy._is_from_pool = True
+    
+    logger = configure_process_logging(args_copy.verbose)
+    
+    # Set up process timeout - this ensures the process doesn't run forever
+    start_time = time.time()
+    def timeout_checker():
+        while True:
+            if time.time() - start_time > args_copy.timeout:
+                logger.error(f"Process exceeded timeout of {args_copy.timeout} seconds")
+                os._exit(1)  # Force exit this process
+            time.sleep(1)  # Check more frequently
+    
+    # Start timeout checker in a separate thread
+    timeout_thread = threading.Thread(target=timeout_checker, daemon=True)
+    timeout_thread.start()
+    
+    # Create a hard timer to terminate process after timeout
+    def hard_timeout_handler():
+        logger.error(f"Process hard timeout after {args_copy.timeout} seconds")
+        os._exit(1)
+    
+    timer = threading.Timer(args_copy.timeout, hard_timeout_handler)
+    timer.daemon = True
+    timer.start()
+    
+    return process_single_repo(args_copy, repo_info, None)
+
+
+def _process_local_wrapper(args_and_path):
+    """Helper function to process a single local directory in multiprocessing.
+    
+    Args:
+        args_and_path (tuple): Tuple containing (args, local_path)
+        
+    Returns:
+        int: Exit code from process_single_repo
+    """
+    args, local_path = args_and_path
+    # Clone args to avoid modifying the original
+    args_copy = argparse.Namespace(**vars(args))
+    # Mark this args object as coming from a pool
+    args_copy._is_from_pool = True
+    
+    logger = configure_process_logging(args_copy.verbose)
+    
+    # Set up process timeout - this ensures the process doesn't run forever
+    start_time = time.time()
+    def timeout_checker():
+        while True:
+            if time.time() - start_time > args_copy.timeout:
+                logger.error(f"Process exceeded timeout of {args_copy.timeout} seconds")
+                os._exit(1)  # Force exit this process
+            time.sleep(1)  # Check more frequently
+    
+    # Start timeout checker in a separate thread
+    timeout_thread = threading.Thread(target=timeout_checker, daemon=True)
+    timeout_thread.start()
+    
+    # Create a hard timer to terminate process after timeout
+    def hard_timeout_handler():
+        logger.error(f"Process hard timeout after {args_copy.timeout} seconds")
+        os._exit(1)
+    
+    timer = threading.Timer(args_copy.timeout, hard_timeout_handler)
+    timer.daemon = True
+    timer.start()
+    
+    return process_single_repo(args_copy, None, local_path)
+
+
 def process_repo_list(args: argparse.Namespace) -> int:
     """Process a list of repositories in parallel.
     
@@ -907,68 +1024,41 @@ def process_repo_list(args: argparse.Namespace) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     results_jsonl_path = output_dir / "results.jsonl"
     
-    # Filter out already processed repositories upfront
     if args.skip_processed and not args.overwrite and results_jsonl_path.exists():
-        try:
-            # Read the entire file once to get processed repos
-            processed_repos = get_processed_repos(results_jsonl_path)
-            logger.info(f"Found {len(processed_repos)} already processed repositories")
-            
-            # Filter out already processed repositories
-            filtered_repo_infos = []
-            for full_name, sha in repo_infos:
-                repo_identifier = f"{full_name}@{sha}"
-                if repo_identifier not in processed_repos:
-                    filtered_repo_infos.append((full_name, sha))
-                else:
-                    logger.info(f"Skipping already processed repository: {repo_identifier}")
-            
-            logger.info(f"Processing {len(filtered_repo_infos)} out of {len(repo_infos)} repositories (skipping {len(repo_infos) - len(filtered_repo_infos)} already processed)")
-            repo_infos = filtered_repo_infos
-        except Exception as e:
-            logger.error(f"Error filtering processed repositories: {e}")
-            # Continue with all repositories if there's an error
+        processed_repos = get_processed_repos(results_jsonl_path)
+        logger.info(f"Found {len(processed_repos)} already processed repositories")
+        
+        # Filter out already processed repositories
+        filtered_repo_infos = []
+        for full_name, sha in repo_infos:
+            repo_identifier = f"{full_name}@{sha}"
+            if repo_identifier not in processed_repos:
+                filtered_repo_infos.append((full_name, sha))
+            else:
+                logger.info(f"Skipping already processed repository: {repo_identifier}")
+        
+        logger.info(f"Processing {len(filtered_repo_infos)} out of {len(repo_infos)} repositories (skipping {len(repo_infos) - len(filtered_repo_infos)} already processed)")
+        repo_infos = filtered_repo_infos
     
     if not repo_infos:
         logger.info("All repositories have already been processed")
         return 0
     
-    # Process repositories in batches to improve performance
-    batch_size = max(1, min(10, len(repo_infos) // args.num_workers))
-    total_batches = (len(repo_infos) + batch_size - 1) // batch_size  # Ceiling division
+    # Create argument tuples for the wrapper function
+    arg_tuples = [(args, repo_info) for repo_info in repo_infos]
     
-    logger.info(f"Processing {len(repo_infos)} repositories in {total_batches} batches of up to {batch_size} repos each")
-    
-    # Setup progress bar for the entire process
-    pbar = tqdm(total=len(repo_infos), desc="Processing repositories", unit="repo")
-    
-    results = []
-    for batch_start in range(0, len(repo_infos), batch_size):
-        batch_end = min(batch_start + batch_size, len(repo_infos))
-        batch = repo_infos[batch_start:batch_end]
+    # Create a pool of worker processes
+    with multiprocessing.Pool(processes=args.num_workers) as pool:
+        # Process repositories in parallel with progress bar
+        pbar = tqdm(total=len(repo_infos), desc="Processing repositories", unit="repo")
+        results = []
         
-        logger.info(f"Processing batch {batch_start//batch_size + 1}/{total_batches} with {len(batch)} repositories")
+        # Use imap_unordered for better real-time progress updates
+        for result in pool.imap_unordered(_process_repo_wrapper, arg_tuples):
+            results.append(result)
+            pbar.update(1)
         
-        # Create argument tuples for this batch
-        batch_args = [(args, repo_info) for repo_info in batch]
-        
-        # Process this batch in parallel
-        with multiprocessing.Pool(processes=min(args.num_workers, len(batch))) as pool:
-            # Process repo function for this batch
-            def batch_process_repo(args_and_repo):
-                args_copy, repo_info = args_and_repo
-                # We already filtered out processed repos in the main process
-                return process_single_repo(args_copy, repo_info, None)
-            
-            # Process this batch
-            batch_results = []
-            for result in pool.map(batch_process_repo, batch_args):  # Using map instead of imap_unordered for better batching
-                batch_results.append(result)
-                pbar.update(1)
-            
-            results.extend(batch_results)
-    
-    pbar.close()
+        pbar.close()
     
     # Check if any process failed
     return 1 if any(result != 0 for result in results) else 0
@@ -1006,67 +1096,41 @@ def process_local_list(args: argparse.Namespace) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     results_jsonl_path = output_dir / "results.jsonl"
     
-    # Filter out already processed repositories upfront
     if args.skip_processed and not args.overwrite and results_jsonl_path.exists():
-        try:
-            processed_repos = get_processed_repos(results_jsonl_path)
-            logger.info(f"Found {len(processed_repos)} already processed repositories")
-            
-            # Filter out already processed repositories
-            filtered_dir_paths = []
-            for dir_path in dir_paths:
-                repo_identifier = str(Path(dir_path).resolve())
-                if repo_identifier not in processed_repos:
-                    filtered_dir_paths.append(dir_path)
-                else:
-                    logger.info(f"Skipping already processed directory: {repo_identifier}")
-            
-            logger.info(f"Processing {len(filtered_dir_paths)} out of {len(dir_paths)} directories (skipping {len(dir_paths) - len(filtered_dir_paths)} already processed)")
-            dir_paths = filtered_dir_paths
-        except Exception as e:
-            logger.error(f"Error filtering processed directories: {e}")
-            # Continue with all directories if there's an error
+        processed_repos = get_processed_repos(results_jsonl_path)
+        logger.info(f"Found {len(processed_repos)} already processed repositories")
+        
+        # Filter out already processed repositories
+        filtered_dir_paths = []
+        for dir_path in dir_paths:
+            repo_identifier = str(Path(dir_path).resolve())
+            if repo_identifier not in processed_repos:
+                filtered_dir_paths.append(dir_path)
+            else:
+                logger.info(f"Skipping already processed directory: {repo_identifier}")
+        
+        logger.info(f"Processing {len(filtered_dir_paths)} out of {len(dir_paths)} directories (skipping {len(dir_paths) - len(filtered_dir_paths)} already processed)")
+        dir_paths = filtered_dir_paths
     
     if not dir_paths:
         logger.info("All directories have already been processed")
         return 0
     
-    # Process directories in batches to improve performance
-    batch_size = max(1, min(10, len(dir_paths) // args.num_workers))
-    total_batches = (len(dir_paths) + batch_size - 1) // batch_size  # Ceiling division
+    # Create argument tuples for the wrapper function
+    arg_tuples = [(args, dir_path) for dir_path in dir_paths]
     
-    logger.info(f"Processing {len(dir_paths)} directories in {total_batches} batches of up to {batch_size} dirs each")
-    
-    # Setup progress bar for the entire process
-    pbar = tqdm(total=len(dir_paths), desc="Processing directories", unit="dir")
-    
-    results = []
-    for batch_start in range(0, len(dir_paths), batch_size):
-        batch_end = min(batch_start + batch_size, len(dir_paths))
-        batch = dir_paths[batch_start:batch_end]
+    # Create a pool of worker processes
+    with multiprocessing.Pool(processes=args.num_workers) as pool:
+        # Process directories in parallel with progress bar
+        pbar = tqdm(total=len(dir_paths), desc="Processing directories", unit="dir")
+        results = []
         
-        logger.info(f"Processing batch {batch_start//batch_size + 1}/{total_batches} with {len(batch)} directories")
+        # Use imap_unordered for better real-time progress updates
+        for result in pool.imap_unordered(_process_local_wrapper, arg_tuples):
+            results.append(result)
+            pbar.update(1)
         
-        # Create argument tuples for this batch
-        batch_args = [(args, dir_path) for dir_path in batch]
-        
-        # Process this batch in parallel
-        with multiprocessing.Pool(processes=min(args.num_workers, len(batch))) as pool:
-            # Process local function for this batch
-            def batch_process_local(args_and_path):
-                args_copy, local_path = args_and_path
-                # We already filtered out processed dirs in the main process
-                return process_single_repo(args_copy, None, local_path)
-            
-            # Process this batch
-            batch_results = []
-            for result in pool.map(batch_process_local, batch_args):  # Using map instead of imap_unordered for better batching
-                batch_results.append(result)
-                pbar.update(1)
-            
-            results.extend(batch_results)
-    
-    pbar.close()
+        pbar.close()
     
     # Check if any process failed
     return 1 if any(result != 0 for result in results) else 0
