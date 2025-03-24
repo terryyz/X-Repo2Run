@@ -213,13 +213,14 @@ def get_processed_repos(results_jsonl_path: Path) -> Set[str]:
     return processed_repos
 
 
-def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str, str]] = None, local_path: Optional[str] = None) -> int:
+def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str, str]] = None, local_path: Optional[str] = None, skip_processed_check: bool = False) -> int:
     """Process a single repository or local directory.
     
     Args:
         args: Command line arguments
         repo_info: Tuple of (full_name, sha) for repository mode
         local_path: Path to local directory for local mode
+        skip_processed_check: If True, skip the check for processed repositories (use when pre-filtered)
     
     Returns:
         int: Exit code (0 for success, 1 for failure)
@@ -274,7 +275,8 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         repo_identifier = str(local_path_resolved)
     
     # Check if we should skip this repository (already processed)
-    if repo_identifier and args.skip_processed and has_repo_been_processed(results_jsonl_path, repo_identifier) and not args.overwrite:
+    # Only perform this check if skip_processed_check is False (i.e., not pre-filtered)
+    if not skip_processed_check and repo_identifier and args.skip_processed and has_repo_been_processed(results_jsonl_path, repo_identifier) and not args.overwrite:
         logger.info(f"Skipping already processed repository: {repo_identifier}")
         return 0
     
@@ -904,7 +906,7 @@ def _process_repo_wrapper(args_and_repo):
     timer.daemon = True
     timer.start()
     
-    return process_single_repo(args, repo_info, None)
+    return process_single_repo(args, repo_info, None, skip_processed_check=True)
 
 
 def _process_local_wrapper(args_and_path):
@@ -941,7 +943,7 @@ def _process_local_wrapper(args_and_path):
     timer.daemon = True
     timer.start()
     
-    return process_single_repo(args, None, local_path)
+    return process_single_repo(args, None, local_path, skip_processed_check=True)
 
 
 def process_repo_list(args: argparse.Namespace) -> int:
@@ -1108,7 +1110,8 @@ def main():
         return process_local_list(args)
     else:
         # Single repository/directory mode
-        return process_single_repo(args, args.repo if args.repo else None, args.local if args.local else None)
+        # For single mode, we want to do the processed check (don't skip it)
+        return process_single_repo(args, args.repo if args.repo else None, args.local if args.local else None, skip_processed_check=False)
 
 
 if __name__ == "__main__":
