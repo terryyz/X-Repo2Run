@@ -999,45 +999,69 @@ def process_repo_list(args: argparse.Namespace) -> int:
     # Configure logging for the main process
     logger = configure_process_logging(args.verbose)
     
-    # Read the repository list file
-    with open(args.repo_list, 'r') as f:
-        repo_lines = f.readlines()
-    
-    # Parse repository information
+    # Read the repository list file and create a set of repo identifiers
     repo_infos = []
-    for line in repo_lines:
-        line = line.strip()
-        if line and not line.startswith('#'):
-            try:
-                full_name, sha = line.split()
-                repo_infos.append((full_name, sha))
-            except ValueError:
-                logger.error(f"Invalid line in repository list: {line}")
-                return 1
+    input_repo_ids = set()
+    try:
+        # Read input file in chunks for better performance
+        buffer_size = 1024 * 1024  # 1MB
+        with open(args.repo_list, 'r') as f:
+            partial_line = ""
+            while True:
+                chunk = f.read(buffer_size)
+                if not chunk:
+                    # Process final partial line if it exists
+                    if partial_line.strip() and not partial_line.startswith('#'):
+                        try:
+                            full_name, sha = partial_line.strip().split()
+                            repo_infos.append((full_name, sha))
+                            input_repo_ids.add(f"{full_name}@{sha}")
+                        except ValueError:
+                            logger.warning(f"Skipping invalid line: {partial_line.strip()}")
+                    break
+                
+                chunk = partial_line + chunk
+                lines = chunk.split('\n')
+                partial_line = lines.pop() if lines else ""
+                
+                for line in lines:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        try:
+                            full_name, sha = line.split()
+                            repo_infos.append((full_name, sha))
+                            input_repo_ids.add(f"{full_name}@{sha}")
+                        except ValueError:
+                            logger.warning(f"Skipping invalid line: {line}")
+    except Exception as e:
+        logger.error(f"Error reading repository list file: {e}")
+        return 1
     
     if not repo_infos:
         logger.error("No valid repositories found in the list")
         return 1
     
-    # If the output directory exists, get a list of already processed repositories
+    # If skip_processed is enabled, filter out already processed repositories
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     results_jsonl_path = output_dir / "results.jsonl"
     
     if args.skip_processed and not args.overwrite and results_jsonl_path.exists():
+        # Get set of processed repository IDs
         processed_repos = get_processed_repos(results_jsonl_path)
         logger.info(f"Found {len(processed_repos)} already processed repositories")
         
-        # Filter out already processed repositories
-        filtered_repo_infos = []
-        for full_name, sha in repo_infos:
-            repo_identifier = f"{full_name}@{sha}"
-            if repo_identifier not in processed_repos:
-                filtered_repo_infos.append((full_name, sha))
-            else:
-                logger.info(f"Skipping already processed repository: {repo_identifier}")
+        # Use set difference to get unprocessed repositories efficiently
+        unprocessed_ids = input_repo_ids - processed_repos
         
-        logger.info(f"Processing {len(filtered_repo_infos)} out of {len(repo_infos)} repositories (skipping {len(repo_infos) - len(filtered_repo_infos)} already processed)")
+        # Filter repo_infos to only include unprocessed repositories
+        filtered_repo_infos = [
+            info for info in repo_infos 
+            if f"{info[0]}@{info[1]}" in unprocessed_ids
+        ]
+        
+        skipped_count = len(repo_infos) - len(filtered_repo_infos)
+        logger.info(f"Processing {len(filtered_repo_infos)} out of {len(repo_infos)} repositories (skipping {skipped_count} already processed)")
         repo_infos = filtered_repo_infos
     
     if not repo_infos:
