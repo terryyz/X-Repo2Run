@@ -108,7 +108,7 @@ def parse_arguments():
     parser.add_argument(
         '--max-workers',
         type=int,
-        default=4,
+        default=os.cpu_count(),
         help='Maximum number of worker threads for parallel processing (default: 4)'
     )
     
