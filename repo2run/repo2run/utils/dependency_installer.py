@@ -10,6 +10,7 @@ import subprocess
 import sys
 import shutil
 from pathlib import Path
+import tempfile
 
 
 class DependencyInstaller:
@@ -29,6 +30,7 @@ class DependencyInstaller:
         self.repo_path = Path(repo_path)
         self.use_uv = use_uv
         self.logger = logger or logging.getLogger(__name__)
+        self.temp_cache_dir = tempfile.mkdtemp(prefix='repo2run_pip_cache_')
     
     def check_uv_installed(self):
         """
@@ -165,19 +167,30 @@ class DependencyInstaller:
                 self.logger.error(f"Failed to create virtual environment with venv: {str(e)}")
                 raise RuntimeError(f"Failed to create virtual environment with venv: {str(e)}")
     
+    def _clear_pip_cache(self):
+        """Clear pip cache to minimize storage consumption."""
+        try:
+            # Clear pip cache
+            subprocess.run([sys.executable, '-m', 'pip', 'cache', 'purge'], 
+                           capture_output=True, text=True, check=False)
+            
+            # Remove temporary cache directory
+            if os.path.exists(self.temp_cache_dir):
+                shutil.rmtree(self.temp_cache_dir)
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"Failed to clear pip cache: {e}")
+
     def install_requirements(self, requirements, venv_path=None):
         """
-        Install requirements using either UV or pip.
+        Install requirements with minimal cache usage and storage consumption.
         
         Args:
-            requirements (list): List of requirements to install.
+            requirements (List[str]): List of package requirements
             venv_path (Path, optional): Path to the virtual environment. If None, a default path is used.
         
         Returns:
-            list: List of dictionaries with installation results.
-        
-        Raises:
-            RuntimeError: If any requirement fails to install.
+            List[Dict]: Installation results
         """
         if venv_path is None:
             venv_path = self.repo_path / '.venv'
@@ -188,10 +201,49 @@ class DependencyInstaller:
             self.logger.info(f"Virtual environment not found at {venv_path}. Creating...")
             self.create_virtual_environment(venv_path)
         
-        if self.use_uv:
-            return self._install_requirements_uv(requirements, venv_path)
-        else:
-            return self._install_requirements_pip(requirements, venv_path)
+        # Minimize pip cache and storage
+        pip_cmd = [
+            str(venv_path / 'bin' / 'pip'),
+            'install', 
+            '--no-cache-dir',  # Disable pip cache
+            '--disable-pip-version-check',  # Disable version check to reduce network usage
+            '--quiet',  # Reduce output verbosity
+            '--no-warn-script-location'  # Suppress warnings about script locations
+        ]
+        
+        # Add temporary cache directory to isolate and minimize cache
+        pip_cmd.extend([
+            f'--cache-dir={self.temp_cache_dir}',
+            '--no-input'  # Disable interactive prompts
+        ])
+        
+        results = []
+        for req in requirements:
+            try:
+                # Install each requirement individually to isolate failures
+                install_result = subprocess.run(
+                    pip_cmd + [req],
+                    capture_output=True, 
+                    text=True, 
+                    check=False
+                )
+                
+                results.append({
+                    'requirement': req,
+                    'success': install_result.returncode == 0,
+                    'output': install_result.stdout or install_result.stderr
+                })
+            except Exception as e:
+                results.append({
+                    'requirement': req,
+                    'success': False,
+                    'output': str(e)
+                })
+        
+        # Clear pip cache after installation
+        self._clear_pip_cache()
+        
+        return results
     
     def _install_requirements_uv(self, requirements, venv_path):
         """
@@ -444,4 +496,12 @@ class DependencyInstaller:
             self.logger.warning(f"Failed to install pytest: {e.stderr}")
             raise RuntimeError("Failed to install pytest")
         
-        return results 
+        return results
+    
+    def __del__(self):
+        """Ensure temporary cache directory is cleaned up."""
+        try:
+            if os.path.exists(self.temp_cache_dir):
+                shutil.rmtree(self.temp_cache_dir)
+        except Exception:
+            pass 

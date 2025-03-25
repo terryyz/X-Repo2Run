@@ -213,6 +213,38 @@ def get_processed_repos(results_jsonl_path: Path) -> Set[str]:
     return processed_repos
 
 
+def cleanup_resources(working_dir: Path, venv_path: Path, logger=None):
+    """Aggressively clean up resources to minimize storage consumption.
+    
+    Args:
+        working_dir (Path): Directory of the processed repository
+        venv_path (Path): Path to the virtual environment
+        logger (logging.Logger, optional): Logger for reporting cleanup actions
+    """
+    try:
+        # Remove virtual environment
+        if venv_path and venv_path.exists():
+            if logger:
+                logger.info(f"Removing virtual environment at {venv_path}")
+            shutil.rmtree(venv_path, ignore_errors=True)
+        
+        # Remove working directory
+        if working_dir and working_dir.exists():
+            if logger:
+                logger.info(f"Removing working directory at {working_dir}")
+            shutil.rmtree(working_dir, ignore_errors=True)
+        
+        # Additional cleanup: remove any pip or package caches
+        try:
+            subprocess.run([sys.executable, '-m', 'pip', 'cache', 'purge'], 
+                           capture_output=True, text=True, check=False)
+        except Exception:
+            pass
+    except Exception as e:
+        if logger:
+            logger.warning(f"Error during resource cleanup: {e}")
+
+
 def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str, str]] = None, local_path: Optional[str] = None) -> int:
     """Process a single repository or local directory.
     
@@ -842,11 +874,9 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         
         # Clean up the project directory to save disk space
         try:
-            add_log_entry(f"Cleaning up project directory {working_dir}")
-            shutil.rmtree(working_dir)
-            add_log_entry(f"Successfully removed project directory {working_dir}")
+            cleanup_resources(working_dir, venv_path, logger=logger)
         except Exception as e:
-            add_log_entry(f"Warning: Failed to remove project directory {working_dir}: {e}", level="WARNING")
+            add_log_entry(f"Warning: Failed to clean up resources: {e}", level="WARNING")
         
         return 0
     
@@ -865,9 +895,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         # Clean up the project directory in case of error too
         if 'working_dir' in locals() and working_dir.exists():
             try:
-                add_log_entry(f"Cleaning up project directory {working_dir} after error")
-                shutil.rmtree(working_dir)
-                add_log_entry(f"Successfully removed project directory {working_dir}")
+                cleanup_resources(working_dir, venv_path, logger=logger)
             except Exception as cleanup_error:
                 add_log_entry(f"Warning: Failed to remove project directory after error: {cleanup_error}", level="WARNING")
         
