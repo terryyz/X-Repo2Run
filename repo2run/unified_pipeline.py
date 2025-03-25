@@ -259,8 +259,8 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
     manager = Manager()
     repo_req_data = manager.dict()
     
-    # Set to store all unique dependencies (we'll merge later)
-    dependencies_by_repo = []
+    # Set to store all unique dependencies (we'll update it incrementally)
+    all_dependencies = set()
     
     # Print summary of repositories being processed
     if isinstance(repositories[0], tuple):
@@ -305,7 +305,6 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
                 repo = future_to_repo[future]
                 try:
                     repo_id, packages = future.result()
-                    dependencies_by_repo.append(packages)
                     if repo_id:
                         # Display what we found for this repository
                         repo_name = repo_id.split('@')[0] if '@' in repo_id else repo_id
@@ -322,11 +321,6 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
     
     # Convert manager dict to regular dict
     repo_req_data_dict = dict(repo_req_data)
-    
-    # Merge all dependencies
-    all_dependencies = set()
-    for packages in dependencies_by_repo:
-        all_dependencies.update(packages)
     
     # Save repo requirements to file
     repo_req_path = output_dir / "repo_req.json"
@@ -345,7 +339,6 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
     logger.info(f"✨ Dependency analysis complete!")
     logger.info(f"📊 Summary:")
     logger.info(f"  - Found {len(all_dependencies)} unique dependencies across all repositories")
-    logger.info(f"  - All repositories have at least 1 dependency: {all(len(deps) > 0 for deps in repo_req_data_dict.values())}")
     
     # Find most common dependencies (top 5)
     dep_counts = {}
