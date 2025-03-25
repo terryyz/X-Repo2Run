@@ -745,14 +745,13 @@ def run_tests_parallel(repositories, output_dir, unified_venv, args):
     
     # Increase default max_workers for better parallelism
     max_workers = args.max_workers
-    if max_workers <= 4 and len(repositories) > 10:
-        # Use more workers for larger numbers of repositories
-        # but don't exceed available CPU cores
-        import multiprocessing
-        available_cores = multiprocessing.cpu_count()
-        suggested_workers = min(available_cores, len(repositories), 16)  
-        max_workers = suggested_workers
-        logger.info(f"Increasing worker threads to {max_workers} for better parallelism")
+    # Use more workers for larger numbers of repositories
+    # but don't exceed available CPU cores
+    import multiprocessing
+    available_cores = multiprocessing.cpu_count()
+    suggested_workers = min(available_cores, len(repositories), 16)  
+    max_workers = suggested_workers
+    logger.info(f"Increasing worker threads to {max_workers} for better parallelism")
     
     # Process repositories in parallel
     all_results = []
