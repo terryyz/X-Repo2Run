@@ -201,13 +201,11 @@ def extract_dependencies(repo_info, output_dir, args, repo_req_data):
             repo_id = str(local_path.resolve())
         
         # Extract dependencies
-        logger.info(f"Extracting dependencies from {repo_id}")
         dependency_extractor = DependencyExtractor(working_dir, logger=logger)
         requirements_dict = dependency_extractor.extract_all_requirements()
         
         # Unify requirements for this repository
         unified_requirements = dependency_extractor.unify_requirements(requirements_dict)
-        logger.info(f"Found {len(unified_requirements)} unique requirements for {repo_id}")
         
         # Extract package names without version specifiers
         packages = set()
@@ -289,7 +287,7 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
         # Submit all tasks
         future_to_repo = {
             executor.submit(extract_dependencies, repo, output_dir, args, repo_req_data): repo
-            for repo in repositories
+            for repo in tqdm(repositories, desc="Extracting dependencies", total=len(repositories))
         }
         
         # Process results as they complete with a detailed progress bar
