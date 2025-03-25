@@ -244,13 +244,29 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
         tuple: (all_dependencies, repo_req_data)
     """
     logger = logging.getLogger(__name__)
-    logger.info(f"Analyzing dependencies from {len(repositories)} repositories")
+    logger.info(f"Starting dependency analysis for {len(repositories)} repositories")
     
     # Dictionary to store requirements by repository
     repo_req_data = {}
     
     # Set to store all unique dependencies
     all_dependencies = set()
+    
+    # Print summary of repositories being processed
+    if isinstance(repositories[0], tuple):
+        # GitHub repositories
+        logger.info("Repositories to process:")
+        for idx, (full_name, sha) in enumerate(repositories[:10], 1):
+            logger.info(f"  {idx}. {full_name}@{sha}")
+        if len(repositories) > 10:
+            logger.info(f"  ... and {len(repositories) - 10} more repositories")
+    else:
+        # Local directories
+        logger.info("Local directories to process:")
+        for idx, path in enumerate(repositories[:10], 1):
+            logger.info(f"  {idx}. {path}")
+        if len(repositories) > 10:
+            logger.info(f"  ... and {len(repositories) - 10} more directories")
     
     # Process repositories in parallel
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
@@ -260,13 +276,17 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
             for repo in repositories
         }
         
-        # Process results as they complete with a progress bar
-        with tqdm(total=len(repositories), desc="Extracting dependencies") as pbar:
+        # Process results as they complete with a detailed progress bar
+        with tqdm(total=len(repositories), desc="Extracting dependencies", 
+                 bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]") as pbar:
             for future in concurrent.futures.as_completed(future_to_repo):
                 repo = future_to_repo[future]
                 try:
                     repo_id, packages = future.result()
                     if repo_id:
+                        # Display what we found for this repository
+                        repo_name = repo_id.split('@')[0] if '@' in repo_id else repo_id
+                        pbar.set_postfix_str(f"Found {len(packages)} packages in {repo_name}")
                         all_dependencies.update(packages)
                 except Exception as e:
                     logger.error(f"Error processing {repo}: {str(e)}")
@@ -275,18 +295,36 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
     
     # Save repo requirements to file
     repo_req_path = output_dir / "repo_req.json"
+    logger.info(f"Saving repository requirements to {repo_req_path}")
     with open(repo_req_path, 'w') as f:
         json.dump(repo_req_data, f, indent=2)
     
     # Save all dependencies to requirements.txt
     requirements_path = output_dir / "requirements.txt"
+    logger.info(f"Saving unified requirements to {requirements_path}")
     with open(requirements_path, 'w') as f:
         for dep in sorted(all_dependencies):
             f.write(f"{dep}\n")
     
-    logger.info(f"Found {len(all_dependencies)} unique dependencies across all repositories")
-    logger.info(f"Requirements saved to {requirements_path}")
-    logger.info(f"Repository requirements saved to {repo_req_path}")
+    # Print summary of findings
+    logger.info(f"✨ Dependency analysis complete!")
+    logger.info(f"📊 Summary:")
+    logger.info(f"  - Found {len(all_dependencies)} unique dependencies across all repositories")
+    logger.info(f"  - All repositories have at least 1 dependency: {all(len(deps) > 0 for deps in repo_req_data.values())}")
+    
+    # Find most common dependencies (top 5)
+    dep_counts = {}
+    for deps in repo_req_data.values():
+        for dep in deps:
+            dep_counts[dep] = dep_counts.get(dep, 0) + 1
+    
+    top_deps = sorted(dep_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+    logger.info(f"  - Top dependencies:")
+    for dep, count in top_deps:
+        logger.info(f"    • {dep}: used in {count} repositories ({count/len(repositories):.1%})")
+    
+    logger.info(f"📄 Requirements saved to {requirements_path}")
+    logger.info(f"📄 Repository requirements saved to {repo_req_path}")
     
     return all_dependencies, repo_req_data
 
@@ -304,7 +342,7 @@ def create_unified_environment(all_dependencies, output_dir, args):
         tuple: (venv_path, install_status)
     """
     logger = logging.getLogger(__name__)
-    logger.info(f"Creating unified virtual environment with {len(all_dependencies)} dependencies")
+    logger.info(f"🔧 Creating unified virtual environment with {len(all_dependencies)} dependencies")
     
     # Create virtual environment in the output directory
     venv_path = output_dir / "unified_venv"
@@ -318,12 +356,13 @@ def create_unified_environment(all_dependencies, output_dir, args):
         if args.use_uv:
             logger.info(f"Creating virtual environment with UV at {venv_path}")
             try:
-                subprocess.run(
+                result = subprocess.run(
                     ['uv', 'venv', str(venv_path)],
                     check=True,
                     capture_output=True,
                     text=True
                 )
+                logger.info(f"Virtual environment created successfully with UV")
             except Exception as e:
                 logger.error(f"Failed to create virtual environment with UV: {str(e)}")
                 return None, {}
@@ -332,65 +371,105 @@ def create_unified_environment(all_dependencies, output_dir, args):
             try:
                 import venv
                 venv.create(venv_path, with_pip=True)
+                logger.info(f"Virtual environment created successfully with venv")
             except Exception as e:
                 logger.error(f"Failed to create virtual environment with venv: {str(e)}")
                 return None, {}
+    else:
+        logger.info(f"Using existing virtual environment at {venv_path}")
     
     # Install dependencies
     install_status = {}
     dependencies_list = sorted(all_dependencies)
     
-    for dep in tqdm(dependencies_list, desc="Installing dependencies"):
-        try:
-            if args.use_uv:
-                # Use UV to install the dependency
-                result = subprocess.run(
-                    ['uv', 'pip', 'install', dep],
-                    cwd=venv_path,
-                    check=False,
-                    capture_output=True,
-                    text=True
-                )
-            else:
-                # Get pip path
-                if sys.platform == 'win32':
-                    pip_path = venv_path / 'Scripts' / 'pip.exe'
-                else:
-                    pip_path = venv_path / 'bin' / 'pip'
-                
-                # Use pip to install the dependency
-                result = subprocess.run(
-                    [str(pip_path), 'install', dep],
-                    check=False,
-                    capture_output=True,
-                    text=True
-                )
-            
-            success = result.returncode == 0
-            install_status[dep] = {
-                "success": success,
-                "error": result.stderr if not success else None
-            }
-            
-            if not success:
-                logger.warning(f"Failed to install {dep}: {result.stderr}")
+    logger.info(f"🔄 Installing {len(dependencies_list)} dependencies...")
+    
+    # Group dependencies in batches of 10 for better progress visibility
+    batch_size = min(10, len(dependencies_list))
+    batches = [dependencies_list[i:i + batch_size] for i in range(0, len(dependencies_list), batch_size)]
+    
+    # Use a detailed progress bar for installation
+    with tqdm(total=len(dependencies_list), desc="Installing dependencies", 
+             bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]") as pbar:
         
-        except Exception as e:
-            logger.error(f"Error installing {dep}: {str(e)}")
-            install_status[dep] = {
-                "success": False,
-                "error": str(e)
-            }
+        for batch_idx, batch in enumerate(batches, 1):
+            logger.info(f"Processing batch {batch_idx}/{len(batches)} ({len(batch)} dependencies)")
+            
+            for dep in batch:
+                try:
+                    pbar.set_postfix_str(f"Installing {dep}")
+                    
+                    if args.use_uv:
+                        # Use UV to install the dependency
+                        result = subprocess.run(
+                            ['uv', 'pip', 'install', dep],
+                            cwd=venv_path,
+                            check=False,
+                            capture_output=True,
+                            text=True
+                        )
+                    else:
+                        # Get pip path
+                        if sys.platform == 'win32':
+                            pip_path = venv_path / 'Scripts' / 'pip.exe'
+                        else:
+                            pip_path = venv_path / 'bin' / 'pip'
+                        
+                        # Use pip to install the dependency
+                        result = subprocess.run(
+                            [str(pip_path), 'install', dep],
+                            check=False,
+                            capture_output=True,
+                            text=True
+                        )
+                    
+                    success = result.returncode == 0
+                    install_status[dep] = {
+                        "success": success,
+                        "error": result.stderr if not success else None
+                    }
+                    
+                    if not success:
+                        logger.warning(f"Failed to install {dep}: {result.stderr}")
+                    else:
+                        if args.verbose:
+                            logger.info(f"Successfully installed {dep}")
+                
+                except Exception as e:
+                    logger.error(f"Error installing {dep}: {str(e)}")
+                    install_status[dep] = {
+                        "success": False,
+                        "error": str(e)
+                    }
+                
+                pbar.update(1)
     
     # Save installation status to file
     install_status_path = output_dir / "install_status.json"
+    logger.info(f"Saving installation status to {install_status_path}")
     with open(install_status_path, 'w') as f:
         json.dump(install_status, f, indent=2)
     
     # Count successful installations
     success_count = sum(1 for status in install_status.values() if status["success"])
-    logger.info(f"Successfully installed {success_count} out of {len(all_dependencies)} dependencies")
-    logger.info(f"Installation status saved to {install_status_path}")
+    failure_count = len(all_dependencies) - success_count
+    success_percent = (success_count / len(all_dependencies)) * 100 if all_dependencies else 0
+    
+    # Print installation summary
+    logger.info(f"✨ Dependency installation complete!")
+    logger.info(f"📊 Summary:")
+    logger.info(f"  - Successfully installed {success_count} out of {len(all_dependencies)} dependencies ({success_percent:.1f}%)")
+    
+    if failure_count > 0:
+        logger.warning(f"  - {failure_count} dependencies failed to install")
+        # List the first few failed dependencies
+        failed_deps = [dep for dep, status in install_status.items() if not status["success"]]
+        for i, dep in enumerate(failed_deps[:5]):
+            logger.warning(f"    • {dep}: {install_status[dep]['error'][:100]}")
+        if len(failed_deps) > 5:
+            logger.warning(f"    • ... and {len(failed_deps) - 5} more")
+    
+    logger.info(f"📄 Installation status saved to {install_status_path}")
     
     return venv_path, install_status
 
@@ -602,10 +681,38 @@ def run_tests_parallel(repositories, output_dir, unified_venv, args):
         dict: Test results by repository
     """
     logger = logging.getLogger(__name__)
-    logger.info(f"Running tests for {len(repositories)} repositories")
+    logger.info(f"🧪 Running tests for {len(repositories)} repositories using unified environment")
+    
+    # Print environment info
+    logger.info(f"📂 Environment details:")
+    logger.info(f"  - Virtual environment: {unified_venv}")
+    
+    # Try to get Python version in the virtual environment
+    try:
+        if sys.platform == 'win32':
+            python_path = unified_venv / 'Scripts' / 'python.exe'
+        else:
+            python_path = unified_venv / 'bin' / 'python'
+        
+        result = subprocess.run(
+            [str(python_path), '--version'],
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        logger.info(f"  - Python version: {result.stdout.strip()}")
+    except Exception:
+        logger.info(f"  - Python version: Unknown")
     
     # Results file
     records_path = output_dir / "records.jsonl"
+    logger.info(f"📄 Test results will be saved to {records_path}")
+    
+    # Clear existing records.jsonl if it exists
+    if records_path.exists():
+        with open(records_path, 'w') as f:
+            # Empty the file
+            pass
     
     # Process repositories in parallel
     all_results = []
@@ -616,13 +723,39 @@ def run_tests_parallel(repositories, output_dir, unified_venv, args):
             for repo in repositories
         }
         
-        # Process results as they complete with a progress bar
-        with tqdm(total=len(repositories), desc="Running tests") as pbar:
+        # Process results as they complete with a detailed progress bar
+        total_tests = 0
+        passed_tests = 0
+        failed_tests = 0
+        skipped_tests = 0
+        
+        # Create a progress bar with more information
+        with tqdm(total=len(repositories), desc="Running tests", 
+                 bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]") as pbar:
             for future in concurrent.futures.as_completed(future_to_repo):
                 repo = future_to_repo[future]
                 try:
+                    # Display which repository is currently being processed
+                    repo_name = ""
+                    if isinstance(repo, tuple):
+                        repo_name = repo[0]  # GitHub repo name
+                    else:
+                        repo_name = repo.name  # Local directory name
+                    
+                    pbar.set_postfix_str(f"Processing {repo_name}")
                     result = future.result()
                     all_results.append(result)
+                    
+                    # Update test statistics
+                    repo_tests = result.get("tests", {})
+                    total_tests += repo_tests.get("found", 0)
+                    passed_tests += repo_tests.get("passed", 0)
+                    failed_tests += repo_tests.get("failed", 0)
+                    skipped_tests += repo_tests.get("skipped", 0)
+                    
+                    # Update status in progress bar
+                    status = result.get("status", "unknown")
+                    pbar.set_postfix_str(f"{repo_name}: {status}")
                     
                     # Append to records.jsonl
                     with open(records_path, 'a') as f:
@@ -647,12 +780,25 @@ def run_tests_parallel(repositories, output_dir, unified_venv, args):
         if status in status_counts:
             status_counts[status] += 1
     
-    logger.info(f"Test results summary:")
-    logger.info(f"  Success: {status_counts['success']}")
-    logger.info(f"  Partial success: {status_counts['partial_success']}")
-    logger.info(f"  Failure: {status_counts['failure']}")
-    logger.info(f"  Skip: {status_counts['skip']}")
-    logger.info(f"  Error: {status_counts['error']}")
+    # Print test summary with emojis for better readability
+    logger.info(f"✨ Test execution complete!")
+    logger.info(f"📊 Repository status summary:")
+    logger.info(f"  ✅ Success: {status_counts['success']} repositories")
+    logger.info(f"  ⚠️ Partial success: {status_counts['partial_success']} repositories")
+    logger.info(f"  ❌ Failure: {status_counts['failure']} repositories")
+    logger.info(f"  ⏩ Skip (no tests): {status_counts['skip']} repositories")
+    logger.info(f"  🔥 Error: {status_counts['error']} repositories")
+    
+    # Calculate percentages safely
+    passed_percent = (passed_tests / total_tests * 100) if total_tests > 0 else 0
+    failed_percent = (failed_tests / total_tests * 100) if total_tests > 0 else 0
+    skipped_percent = (skipped_tests / total_tests * 100) if total_tests > 0 else 0
+    
+    logger.info(f"📊 Test case summary:")
+    logger.info(f"  - Total test cases: {total_tests}")
+    logger.info(f"  - Passed: {passed_tests} ({passed_percent:.1f}%)")
+    logger.info(f"  - Failed: {failed_tests} ({failed_percent:.1f}%)")
+    logger.info(f"  - Skipped: {skipped_tests} ({skipped_percent:.1f}%)")
     
     return all_results
 
@@ -681,6 +827,8 @@ def filter_successful_repos(test_results):
 
 def main():
     """Main entry point for the application."""
+    start_time = time.time()
+    
     # Parse arguments
     args = parse_arguments()
     
@@ -693,25 +841,46 @@ def main():
     logger.info(f"Using output directory: {output_dir}")
     
     try:
+        # Print banner
+        logger.info("=" * 80)
+        logger.info(f"🚀 Starting Repo2Run Unified Pipeline")
+        logger.info(f"📅 {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info("=" * 80)
+        
         # Load repositories
+        logger.info("\n" + "=" * 40)
+        logger.info("📋 STAGE 1: LOADING REPOSITORIES")
+        logger.info("=" * 40)
         repositories = load_repositories(args)
         if not repositories:
             logger.error("No repositories to process. Exiting.")
             return 1
         
-        # Step 1: Analyze dependencies across all repositories
+        # Stage 1: Analyze dependencies across all repositories
+        logger.info("\n" + "=" * 40)
+        logger.info("🔍 STAGE 2: ANALYZING DEPENDENCIES")
+        logger.info("=" * 40)
         all_dependencies, repo_req_data = analyze_dependencies_parallel(repositories, output_dir, args)
         
-        # Step 2: Create unified virtual environment with all dependencies
+        # Stage 2: Create unified virtual environment with all dependencies
+        logger.info("\n" + "=" * 40)
+        logger.info("🏗️ STAGE 3: CREATING UNIFIED ENVIRONMENT")
+        logger.info("=" * 40)
         unified_venv, install_status = create_unified_environment(all_dependencies, output_dir, args)
         if not unified_venv:
             logger.error("Failed to create unified virtual environment. Exiting.")
             return 1
         
-        # Step 3: Run tests for each repository
+        # Stage 3: Run tests for each repository
+        logger.info("\n" + "=" * 40)
+        logger.info("🧪 STAGE 4: RUNNING TESTS")
+        logger.info("=" * 40)
         test_results = run_tests_parallel(repositories, output_dir, unified_venv, args)
         
-        # Step 4: Filter repositories that pass all tests or have no tests
+        # Stage 4: Filter repositories that pass all tests or have no tests
+        logger.info("\n" + "=" * 40)
+        logger.info("🎯 STAGE 5: FILTERING SUCCESSFUL REPOSITORIES")
+        logger.info("=" * 40)
         successful_repos = filter_successful_repos(test_results)
         
         # Save the list of successful repositories
@@ -721,6 +890,30 @@ def main():
         
         logger.info(f"Found {len(successful_repos)} repositories that pass all tests or have no tests")
         logger.info(f"Successful repositories saved to {successful_repos_path}")
+        
+        # Print success rate
+        success_rate = len(successful_repos) / len(repositories) * 100 if repositories else 0
+        logger.info(f"Success rate: {success_rate:.1f}% ({len(successful_repos)}/{len(repositories)})")
+        
+        # Print summary of files generated
+        logger.info("\n" + "=" * 40)
+        logger.info("📊 SUMMARY OF GENERATED FILES")
+        logger.info("=" * 40)
+        logger.info(f"1. requirements.txt: Union of all dependencies (without versions)")
+        logger.info(f"2. repo_req.json: Mapping of repositories to dependencies")
+        logger.info(f"3. install_status.json: Installation status for each dependency")
+        logger.info(f"4. records.jsonl: Detailed test results for each repository")
+        logger.info(f"5. successful_repos.json: List of repositories that pass all tests or have no tests")
+        
+        # Print total execution time
+        end_time = time.time()
+        execution_time = end_time - start_time
+        hours, remainder = divmod(execution_time, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        logger.info("\n" + "=" * 80)
+        logger.info(f"✨ Unified Pipeline completed successfully in {int(hours)}h {int(minutes)}m {int(seconds)}s")
+        logger.info("=" * 80)
         
         return 0
     

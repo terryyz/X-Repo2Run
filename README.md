@@ -108,6 +108,10 @@ python run_unified_pipeline.py --repo-list repos.txt --output-dir output_path [o
 
 # Process local directories from a list file
 python run_unified_pipeline.py --local-list dirs.txt --output-dir output_path [options]
+
+# Use the main repo2run command with the --global flag
+repo2run --global --repo-list repos.txt --output-dir output_path [options]
+repo2run --global --local-list dirs.txt --output-dir output_path [options]
 ```
 
 #### Arguments
@@ -134,11 +138,30 @@ The Unified Pipeline generates the following output files:
 4. `records.jsonl`: Detailed logs and execution status for each repository
 5. `successful_repos.json`: List of repositories that pass all tests or have no tests
 
+#### Enhanced Progress Reporting
+
+The unified pipeline provides detailed progress reporting throughout the execution:
+
+1. **Repository Loading Stage**: Lists repositories to be processed
+2. **Dependency Analysis Stage**: Shows real-time progress with package counts per repository 
+3. **Environment Creation Stage**: Shows detailed installation progress with batched processing
+4. **Test Execution Stage**: Displays test status for each repository in real-time
+5. **Final Summary**: Presents comprehensive statistics including:
+   - Test success/failure rates
+   - Dependency installation success rates
+   - Most common dependencies across repositories
+   - Overall repository success rate
+
+Each stage is clearly separated with visual dividers, and key statistics are highlighted with emoji indicators for easier visual parsing.
+
 #### Example
 
 ```bash
 # Process 10 repositories, using 8 worker threads and UV for dependency management
 python run_unified_pipeline.py --repo-list repos.txt --output-dir ./unified_output --max-workers 8 --use-uv --verbose
+
+# Or use the main command with global flag
+repo2run --global --repo-list repos.txt --output-dir ./unified_output --max-workers 8 --use-uv --verbose
 ```
 
 ### Advanced Use Cases
