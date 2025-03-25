@@ -284,15 +284,15 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
     
     # Process repositories in parallel using ProcessPoolExecutor for true parallelism
     with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks
-        future_to_repo = {
-            executor.submit(extract_dependencies, repo, output_dir, args, repo_req_data): repo
-            for repo in tqdm(repositories, desc="Extracting dependencies", total=len(repositories))
-        }
-        
-        # Process results as they complete with a detailed progress bar
+        # Initialize the progress bar outside the dictionary comprehension
         with tqdm(total=len(repositories), desc="Extracting dependencies", 
                  bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]") as pbar:
+            
+            future_to_repo = {
+                executor.submit(extract_dependencies, repo, output_dir, args, repo_req_data): repo
+                for repo in repositories
+            }
+            
             for future in concurrent.futures.as_completed(future_to_repo):
                 repo = future_to_repo[future]
                 try:
