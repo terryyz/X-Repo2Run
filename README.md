@@ -90,6 +90,57 @@ another/repo def456
 # Lines starting with # are comments
 ```
 
+### Unified Pipeline
+
+The Unified Pipeline is a new workflow that:
+
+1. Analyzes dependencies across all repositories (ignoring versions) and creates a union set
+2. Installs all dependencies in a single virtual environment
+3. Runs tests for each repository and identifies those that pass all tests or have no tests
+
+This approach is more efficient when processing multiple repositories with overlapping dependencies.
+
+#### Usage
+
+```bash
+# Process repositories from a list file
+python run_unified_pipeline.py --repo-list repos.txt --output-dir output_path [options]
+
+# Process local directories from a list file
+python run_unified_pipeline.py --local-list dirs.txt --output-dir output_path [options]
+```
+
+#### Arguments
+
+| Argument | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `--repo-list FILE` | Process multiple repositories from a list file | None | `--repo-list repos.txt` |
+| `--local-list FILE` | Process multiple local repositories from a list file | None | `--local-list local_repos.txt` |
+| `--output-dir DIR` | Directory to store output files | `output` | `--output-dir ./results` |
+| `--workspace-dir DIR` | Directory to use as workspace | Temporary directory | `--workspace-dir ./workspace` |
+| `--timeout SECONDS` | Maximum execution time | 7200 (2 hours) | `--timeout 3600` |
+| `--verbose` | Enable detailed logging | Disabled | `--verbose` |
+| `--overwrite` | Overwrite existing output directory | Disabled | `--overwrite` |
+| `--use-uv` | Use UV for dependency management | Disabled (uses pip/venv) | `--use-uv` |
+| `--max-workers N` | Maximum number of worker threads | 4 | `--max-workers 8` |
+
+#### Output Files
+
+The Unified Pipeline generates the following output files:
+
+1. `requirements.txt`: Union of all dependencies across repositories (without version specifiers)
+2. `repo_req.json`: Mapping of repositories to their required dependencies
+3. `install_status.json`: Status of dependency installation (success/failure)
+4. `records.jsonl`: Detailed logs and execution status for each repository
+5. `successful_repos.json`: List of repositories that pass all tests or have no tests
+
+#### Example
+
+```bash
+# Process 10 repositories, using 8 worker threads and UV for dependency management
+python run_unified_pipeline.py --repo-list repos.txt --output-dir ./unified_output --max-workers 8 --use-uv --verbose
+```
+
 ### Advanced Use Cases
 
 #### Continuous Integration
