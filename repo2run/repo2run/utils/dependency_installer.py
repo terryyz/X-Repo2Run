@@ -11,6 +11,7 @@ import sys
 import shutil
 from pathlib import Path
 import tempfile
+import datetime
 
 
 class DependencyInstaller:
@@ -30,7 +31,18 @@ class DependencyInstaller:
         self.repo_path = Path(repo_path)
         self.use_uv = use_uv
         self.logger = logger or logging.getLogger(__name__)
-        self.temp_cache_dir = tempfile.mkdtemp(prefix='repo2run_pip_cache_')
+        
+        # Create a more specific temporary directory name
+        repo_name = self.repo_path.name if self.repo_path else 'unknown'
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.temp_cache_dir = tempfile.mkdtemp(
+            prefix=f'repo2run_pip_cache_{repo_name}_{timestamp}_',
+            dir=tempfile.gettempdir()
+        )
+        
+        # Log the temporary directory for debugging
+        if self.logger:
+            self.logger.info(f"Created temporary cache directory: {self.temp_cache_dir}")
     
     def check_uv_installed(self):
         """

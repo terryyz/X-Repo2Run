@@ -49,6 +49,8 @@ from typing import List, Tuple, Optional, Dict, Set
 from tqdm import tqdm
 import re
 import threading
+import tempfile
+import glob
 
 from repo2run.utils.repo_manager import RepoManager
 from repo2run.utils.dependency_extractor import DependencyExtractor
@@ -213,6 +215,50 @@ def get_processed_repos(results_jsonl_path: Path) -> Set[str]:
     return processed_repos
 
 
+def cleanup_temp_directories(logger=None):
+    """
+    Clean up temporary directories created by the application.
+    
+    This function removes:
+    - Temporary directories created by Python's tempfile module
+    - Specific temporary directories used by Repo2Run
+    
+    Args:
+        logger (logging.Logger, optional): Logger for reporting cleanup actions
+    """
+    try:
+        # Clean Python's default temporary directory
+        default_temp_dir = tempfile.gettempdir()
+        
+        # Find and remove temporary directories
+        temp_patterns = [
+            os.path.join(default_temp_dir, 'repo2run_*'),  # Repo2Run specific temp dirs
+            os.path.join(default_temp_dir, 'tmp*'),        # General temporary directories
+            os.path.join(default_temp_dir, 'pip_*'),       # Pip cache directories
+            os.path.join(default_temp_dir, 'uv_*')         # UV cache directories
+        ]
+        
+        removed_dirs = 0
+        for pattern in temp_patterns:
+            for temp_dir in glob.glob(pattern):
+                try:
+                    # Check if it's a directory and not currently in use
+                    if os.path.isdir(temp_dir):
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+                        removed_dirs += 1
+                        if logger:
+                            logger.info(f"Removed temporary directory: {temp_dir}")
+                except Exception as e:
+                    if logger:
+                        logger.warning(f"Failed to remove temporary directory {temp_dir}: {e}")
+        
+        if logger:
+            logger.info(f"Cleaned up {removed_dirs} temporary directories")
+    except Exception as e:
+        if logger:
+            logger.warning(f"Error during temporary directory cleanup: {e}")
+
+
 def cleanup_resources(working_dir: Path, venv_path: Path, logger=None):
     """Aggressively clean up resources to minimize storage consumption.
     
@@ -240,6 +286,9 @@ def cleanup_resources(working_dir: Path, venv_path: Path, logger=None):
                            capture_output=True, text=True, check=False)
         except Exception:
             pass
+        
+        # Clean up temporary directories
+        cleanup_temp_directories(logger)
     except Exception as e:
         if logger:
             logger.warning(f"Error during resource cleanup: {e}")
@@ -1137,20 +1186,30 @@ def process_local_list(args: argparse.Namespace) -> int:
 
 def main():
     """Main entry point for the application."""
-    # Parse arguments
-    args = parse_arguments()
-    
-    # Configure logging for the main process
-    logger = configure_process_logging(args.verbose)
-    
-    # Process based on the mode
-    if args.repo_list:
-        return process_repo_list(args)
-    elif args.local_list:
-        return process_local_list(args)
-    else:
-        # Single repository/directory mode
-        return process_single_repo(args, args.repo if args.repo else None, args.local if args.local else None)
+    try:
+        # Parse arguments
+        args = parse_arguments()
+        
+        # Configure logging for the main process
+        logger = configure_process_logging(args.verbose)
+        
+        # Process based on the mode
+        if args.repo_list:
+            return process_repo_list(args)
+        elif args.local_list:
+            return process_local_list(args)
+        else:
+            # Single repository/directory mode
+            return process_single_repo(args, args.repo if args.repo else None, args.local if args.local else None)
+    except Exception as e:
+        # Log any errors during main execution
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error in main execution: {e}")
+        
+        # Attempt to clean up temporary directories even if main fails
+        cleanup_temp_directories(logger)
+        
+        return 1
 
 
 if __name__ == "__main__":
