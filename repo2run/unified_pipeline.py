@@ -182,6 +182,7 @@ def extract_dependencies(repo_info, output_dir, args, repo_req_data):
     Returns:
         tuple: (repo_identifier, requirements)
     """
+    # Configure logging for each process
     logger = logging.getLogger(__name__)
     
     # Initialize repository manager
@@ -221,8 +222,9 @@ def extract_dependencies(repo_info, output_dir, args, repo_req_data):
                 package_name = match.group(1).lower()
                 packages.add(package_name)
         
-        # Store in repo_req_data
-        repo_req_data[repo_id] = list(packages)
+        # Store in repo_req_data (if it's a Manager dict)
+        if hasattr(repo_req_data, '__setitem__'):
+            repo_req_data[repo_id] = list(packages)
         
         return repo_id, packages
     
@@ -246,11 +248,13 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
     logger = logging.getLogger(__name__)
     logger.info(f"Starting dependency analysis for {len(repositories)} repositories")
     
-    # Dictionary to store requirements by repository
-    repo_req_data = {}
+    # Dictionary to store requirements by repository (use a thread-safe manager)
+    from multiprocessing import Manager
+    manager = Manager()
+    repo_req_data = manager.dict()
     
-    # Set to store all unique dependencies
-    all_dependencies = set()
+    # Set to store all unique dependencies (we'll merge later)
+    dependencies_by_repo = []
     
     # Print summary of repositories being processed
     if isinstance(repositories[0], tuple):
@@ -269,8 +273,19 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
         if len(repositories) > 10:
             logger.info(f"  ... and {len(repositories) - 10} more directories")
     
-    # Process repositories in parallel
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+    # Increase default max_workers for better parallelism
+    max_workers = args.max_workers
+    if max_workers <= 4 and len(repositories) > 10:
+        # Use more workers for larger numbers of repositories
+        # but don't exceed available CPU cores
+        import multiprocessing
+        available_cores = multiprocessing.cpu_count()
+        suggested_workers = min(available_cores, len(repositories), 16)  
+        max_workers = suggested_workers
+        logger.info(f"Increasing worker threads to {max_workers} for better parallelism")
+    
+    # Process repositories in parallel using ProcessPoolExecutor for true parallelism
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks
         future_to_repo = {
             executor.submit(extract_dependencies, repo, output_dir, args, repo_req_data): repo
@@ -284,11 +299,11 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
                 repo = future_to_repo[future]
                 try:
                     repo_id, packages = future.result()
+                    dependencies_by_repo.append(packages)
                     if repo_id:
                         # Display what we found for this repository
                         repo_name = repo_id.split('@')[0] if '@' in repo_id else repo_id
                         pbar.set_postfix_str(f"Found {len(packages)} packages in {repo_name}")
-                        all_dependencies.update(packages)
                 except Exception as e:
                     # Handle error message formatting for both tuple and Path objects
                     if isinstance(repo, tuple):
@@ -299,11 +314,19 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
                 
                 pbar.update(1)
     
+    # Convert manager dict to regular dict
+    repo_req_data_dict = dict(repo_req_data)
+    
+    # Merge all dependencies
+    all_dependencies = set()
+    for packages in dependencies_by_repo:
+        all_dependencies.update(packages)
+    
     # Save repo requirements to file
     repo_req_path = output_dir / "repo_req.json"
     logger.info(f"Saving repository requirements to {repo_req_path}")
     with open(repo_req_path, 'w') as f:
-        json.dump(repo_req_data, f, indent=2)
+        json.dump(repo_req_data_dict, f, indent=2)
     
     # Save all dependencies to requirements.txt
     requirements_path = output_dir / "requirements.txt"
@@ -316,11 +339,11 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
     logger.info(f"✨ Dependency analysis complete!")
     logger.info(f"📊 Summary:")
     logger.info(f"  - Found {len(all_dependencies)} unique dependencies across all repositories")
-    logger.info(f"  - All repositories have at least 1 dependency: {all(len(deps) > 0 for deps in repo_req_data.values())}")
+    logger.info(f"  - All repositories have at least 1 dependency: {all(len(deps) > 0 for deps in repo_req_data_dict.values())}")
     
     # Find most common dependencies (top 5)
     dep_counts = {}
-    for deps in repo_req_data.values():
+    for deps in repo_req_data_dict.values():
         for dep in deps:
             dep_counts[dep] = dep_counts.get(dep, 0) + 1
     
@@ -332,7 +355,7 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
     logger.info(f"📄 Requirements saved to {requirements_path}")
     logger.info(f"📄 Repository requirements saved to {repo_req_path}")
     
-    return all_dependencies, repo_req_data
+    return all_dependencies, repo_req_data_dict
 
 
 def create_unified_environment(all_dependencies, output_dir, args):
@@ -493,6 +516,7 @@ def run_tests_for_repo(repo_info, output_dir, unified_venv, args):
     Returns:
         dict: Test results
     """
+    # Configure logging for process
     logger = logging.getLogger(__name__)
     
     # Initialize repository manager
@@ -721,9 +745,22 @@ def run_tests_parallel(repositories, output_dir, unified_venv, args):
             # Empty the file
             pass
     
+    # Increase default max_workers for better parallelism
+    max_workers = args.max_workers
+    if max_workers <= 4 and len(repositories) > 10:
+        # Use more workers for larger numbers of repositories
+        # but don't exceed available CPU cores
+        import multiprocessing
+        available_cores = multiprocessing.cpu_count()
+        suggested_workers = min(available_cores, len(repositories), 16)  
+        max_workers = suggested_workers
+        logger.info(f"Increasing worker threads to {max_workers} for better parallelism")
+    
     # Process repositories in parallel
     all_results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+    
+    # Use a thread pool for the test running
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks
         future_to_repo = {
             executor.submit(run_tests_for_repo, repo, output_dir, unified_venv, args): repo
