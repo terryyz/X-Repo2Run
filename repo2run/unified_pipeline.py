@@ -280,7 +280,7 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
         # but don't exceed available CPU cores
         import multiprocessing
         available_cores = multiprocessing.cpu_count()
-        suggested_workers = min(available_cores, len(repositories), 16)  
+        suggested_workers = min(available_cores-5, len(repositories))  
         max_workers = suggested_workers
         logger.info(f"Increasing worker threads to {max_workers} for better parallelism")
     
