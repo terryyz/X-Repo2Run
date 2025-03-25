@@ -25,6 +25,7 @@ Options:
     --verbose              Enable verbose logging
     --overwrite            Overwrite existing output directory if it exists
     --use-uv               Use UV for dependency management (default: False, use pip/venv)
+    --skip-processed       Skip repositories that have already been processed (based on repo_req.jsonl)
 """
 
 import argparse
@@ -111,6 +112,11 @@ def parse_arguments():
         default=os.cpu_count(),
         help='Maximum number of worker threads for parallel processing (default: 4)'
     )
+    parser.add_argument(
+        '--skip-processed',
+        action='store_true',
+        help='Skip repositories that have already been processed (based on repo_req.jsonl)'
+    )
     
     return parser.parse_args()
 
@@ -167,6 +173,35 @@ def load_repositories(args):
         return local_paths
     
     return []
+
+
+def load_processed_repositories(output_dir):
+    """
+    Load processed repositories from the repo_req.jsonl file.
+    
+    Args:
+        output_dir: Output directory
+        
+    Returns:
+        set: Set of repository identifiers that have already been processed
+    """
+    processed_repos = set()
+    repo_req_path = output_dir / "repo_req.jsonl"
+    
+    if repo_req_path.exists():
+        try:
+            with open(repo_req_path, 'r') as f:
+                for line in f:
+                    try:
+                        record = json.loads(line.strip())
+                        if "repository" in record:
+                            processed_repos.add(record["repository"])
+                    except json.JSONDecodeError:
+                        continue  # Skip malformed lines
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Error reading repo_req.jsonl: {e}")
+    
+    return processed_repos
 
 
 def extract_dependencies(repo_info, output_dir, args, repo_req_data, all_dependencies):
@@ -254,6 +289,44 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
     logger = logging.getLogger(__name__)
     logger.info(f"Starting dependency analysis for {len(repositories)} repositories")
     
+    # Load processed repositories if skip-processed is enabled
+    processed_repos = set()
+    if args.skip_processed:
+        processed_repos = load_processed_repositories(output_dir)
+        logger.info(f"Found {len(processed_repos)} previously processed repositories")
+        
+        # Filter repositories to keep only those not already processed
+        repositories_to_process = []
+        for repo in repositories:
+            if isinstance(repo, tuple):
+                repo_id = f"{repo[0]}@{repo[1]}"
+            else:
+                repo_id = str(Path(repo).resolve())
+                
+            if repo_id not in processed_repos:
+                repositories_to_process.append(repo)
+            else:
+                logger.info(f"Skipping already processed repository: {repo_id}")
+                
+        logger.info(f"Processing {len(repositories_to_process)} new repositories")
+        repositories = repositories_to_process
+        
+        # If no new repositories to process, return early
+        if not repositories:
+            logger.info("No new repositories to process. Skipping dependency analysis.")
+            # Read all dependencies from requirements.txt if it exists
+            all_dependencies = set()
+            requirements_path = output_dir / "requirements.txt"
+            if requirements_path.exists():
+                with open(requirements_path, 'r') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            all_dependencies.add(line)
+            
+            # Return empty repo_req_data as we're not processing anything new
+            return all_dependencies, {}
+    
     # Dictionary to store requirements by repository (use a thread-safe manager)
     from multiprocessing import Manager
     manager = Manager()
@@ -262,22 +335,46 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
     # Set to store all unique dependencies (we'll update it incrementally)
     all_dependencies = set()
     
+    # If using skip-processed, read existing requirements.txt to initialize all_dependencies
+    if args.skip_processed:
+        requirements_path = output_dir / "requirements.txt"
+        if requirements_path.exists():
+            with open(requirements_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        all_dependencies.add(line)
+            logger.info(f"Loaded {len(all_dependencies)} existing dependencies from requirements.txt")
+    
     # Print summary of repositories being processed
-    if isinstance(repositories[0], tuple):
-        # GitHub repositories
-        logger.info("Repositories to process:")
-        for idx, (full_name, sha) in enumerate(repositories[:10], 1):
-            logger.info(f"  {idx}. {full_name}@{sha}")
-        if len(repositories) > 10:
-            logger.info(f"  ... and {len(repositories) - 10} more repositories")
-    else:
-        # Local directories
-        logger.info("Local directories to process:")
-        for idx, path in enumerate(repositories[:10], 1):
-            path_obj = path if isinstance(path, Path) else Path(path)
-            logger.info(f"  {idx}. {path_obj}")
-        if len(repositories) > 10:
-            logger.info(f"  ... and {len(repositories) - 10} more directories")
+    if len(repositories) > 0:
+        if isinstance(repositories[0], tuple):
+            # GitHub repositories
+            logger.info("Repositories to process:")
+            for idx, (full_name, sha) in enumerate(repositories[:10], 1):
+                logger.info(f"  {idx}. {full_name}@{sha}")
+            if len(repositories) > 10:
+                logger.info(f"  ... and {len(repositories) - 10} more repositories")
+        else:
+            # Local directories
+            logger.info("Local directories to process:")
+            for idx, path in enumerate(repositories[:10], 1):
+                path_obj = path if isinstance(path, Path) else Path(path)
+                logger.info(f"  {idx}. {path_obj}")
+            if len(repositories) > 10:
+                logger.info(f"  ... and {len(repositories) - 10} more directories")
+    
+    # Clear repo_req.jsonl if not using skip-processed to avoid duplicate entries
+    if not args.skip_processed:
+        repo_req_jsonl_path = output_dir / "repo_req.jsonl"
+        if repo_req_jsonl_path.exists():
+            with open(repo_req_jsonl_path, 'w') as f:
+                # Empty the file
+                pass
+    
+    # If no repositories to process, return early with existing dependencies
+    if not repositories:
+        return all_dependencies, {}
     
     # Increase default max_workers for better parallelism
     max_workers = args.max_workers
@@ -322,18 +419,31 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
     # Convert manager dict to regular dict
     repo_req_data_dict = dict(repo_req_data)
     
-    # Save repo requirements to file
-    repo_req_path = output_dir / "repo_req.json"
-    logger.info(f"Saving repository requirements to {repo_req_path}")
-    with open(repo_req_path, 'w') as f:
-        json.dump(repo_req_data_dict, f, indent=2)
-    
     # Save all dependencies to requirements.txt
     requirements_path = output_dir / "requirements.txt"
     logger.info(f"Saving unified requirements to {requirements_path}")
     with open(requirements_path, 'w') as f:
         for dep in sorted(all_dependencies):
             f.write(f"{dep}\n")
+    
+    # Save repo requirements to file (only if not using skip-processed or if we have new data)
+    if not args.skip_processed or repo_req_data_dict:
+        repo_req_path = output_dir / "repo_req.json"
+        logger.info(f"Saving repository requirements to {repo_req_path}")
+        
+        # If using skip-processed and repo_req.json exists, merge with new data
+        if args.skip_processed and repo_req_path.exists():
+            try:
+                with open(repo_req_path, 'r') as f:
+                    existing_data = json.load(f)
+                # Merge existing data with new data
+                existing_data.update(repo_req_data_dict)
+                repo_req_data_dict = existing_data
+            except Exception as e:
+                logger.warning(f"Error reading existing repo_req.json: {e}")
+        
+        with open(repo_req_path, 'w') as f:
+            json.dump(repo_req_data_dict, f, indent=2)
     
     # Print summary of findings
     logger.info(f"✨ Dependency analysis complete!")
@@ -349,7 +459,7 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
     top_deps = sorted(dep_counts.items(), key=lambda x: x[1], reverse=True)[:5]
     logger.info(f"  - Top dependencies:")
     for dep, count in top_deps:
-        logger.info(f"    • {dep}: used in {count} repositories ({count/len(repositories):.1%})")
+        logger.info(f"    • {dep}: used in {count} repositories ({count/len(repositories) if repositories else 1:.1%})")
     
     logger.info(f"📄 Requirements saved to {requirements_path}")
     logger.info(f"📄 Repository requirements saved to {repo_req_path}")
