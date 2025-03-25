@@ -169,15 +169,16 @@ def load_repositories(args):
     return []
 
 
-def extract_dependencies(repo_info, output_dir, args, repo_req_data):
+def extract_dependencies(repo_info, output_dir, args, repo_req_data, all_dependencies):
     """
-    Extract dependencies from a single repository.
+    Extract dependencies from a single repository and write to JSONL.
     
     Args:
         repo_info: Repository information (tuple or Path)
         output_dir: Output directory
         args: Command line arguments
         repo_req_data: Dictionary to store repository requirements
+        all_dependencies: Set to store all unique dependencies
     
     Returns:
         tuple: (repo_identifier, requirements)
@@ -219,10 +220,17 @@ def extract_dependencies(repo_info, output_dir, args, repo_req_data):
             if match:
                 package_name = match.group(1).lower()
                 packages.add(package_name)
+                all_dependencies.add(package_name)  # Add to the global set
         
         # Store in repo_req_data (if it's a Manager dict)
         if hasattr(repo_req_data, '__setitem__'):
             repo_req_data[repo_id] = list(packages)
+        
+        # Write to JSONL file
+        repo_req_path = output_dir / "repo_req.jsonl"
+        with open(repo_req_path, 'a') as f:
+            json.dump({"repository": repo_id, "dependencies": list(packages)}, f)
+            f.write('\n')
         
         return repo_id, packages
     
@@ -289,7 +297,7 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
                  bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]") as pbar:
             
             future_to_repo = {
-                executor.submit(extract_dependencies, repo, output_dir, args, repo_req_data): repo
+                executor.submit(extract_dependencies, repo, output_dir, args, repo_req_data, all_dependencies): repo
                 for repo in repositories
             }
             
