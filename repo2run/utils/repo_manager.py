@@ -152,4 +152,23 @@ class RepoManager:
             f.write("local")
         
         self.logger.info(f"Local repository set up successfully at {repo_dir}")
-        return repo_dir 
+        return repo_dir
+
+    def use_local_repository(self, local_path):
+        """
+        Use a local repository directly without copying.
+        
+        Args:
+            local_path (Path): Path to the local repository.
+        
+        Returns:
+            Path: Path to the local repository.
+        
+        Raises:
+            FileNotFoundError: If the local path does not exist.
+        """
+        if not local_path.exists():
+            raise FileNotFoundError(f"Local path {local_path} does not exist")
+        
+        self.logger.info(f"Using local repository directly from: {local_path}")
+        return local_path 

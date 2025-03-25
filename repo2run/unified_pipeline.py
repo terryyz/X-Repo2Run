@@ -155,11 +155,10 @@ def load_repositories(args):
                 for line in f:
                     line = line.strip()
                     if line and not line.startswith('#'):
+                        # Convert string paths to Path objects
+                        # These will be processed directly without copying to output_dir
                         path = Path(line)
-                        if path.exists():
-                            local_paths.append(path)
-                        else:
-                            logger.warning(f"Skipping non-existent path: {line}")
+                        local_paths.append(path)
         except Exception as e:
             logger.error(f"Error reading local list file: {e}")
             return []
@@ -195,8 +194,9 @@ def extract_dependencies(repo_info, output_dir, args, repo_req_data):
             working_dir = repo_manager.clone_repository(full_name, sha)
             repo_id = f"{full_name}@{sha}"
         else:
-            local_path = repo_info
-            working_dir = repo_manager.setup_local_repository(local_path)
+            local_path = Path(repo_info) if not isinstance(repo_info, Path) else repo_info
+            # Use the repository directly without copying
+            working_dir = repo_manager.use_local_repository(local_path)
             repo_id = str(local_path.resolve())
         
         # Extract dependencies
@@ -264,7 +264,8 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
         # Local directories
         logger.info("Local directories to process:")
         for idx, path in enumerate(repositories[:10], 1):
-            logger.info(f"  {idx}. {path}")
+            path_obj = path if isinstance(path, Path) else Path(path)
+            logger.info(f"  {idx}. {path_obj}")
         if len(repositories) > 10:
             logger.info(f"  ... and {len(repositories) - 10} more directories")
     
@@ -289,7 +290,12 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
                         pbar.set_postfix_str(f"Found {len(packages)} packages in {repo_name}")
                         all_dependencies.update(packages)
                 except Exception as e:
-                    logger.error(f"Error processing {repo}: {str(e)}")
+                    # Handle error message formatting for both tuple and Path objects
+                    if isinstance(repo, tuple):
+                        repo_str = f"{repo[0]}@{repo[1]}"
+                    else:
+                        repo_str = str(repo)
+                    logger.error(f"Error processing {repo_str}: {str(e)}")
                 
                 pbar.update(1)
     
@@ -534,8 +540,9 @@ def run_tests_for_repo(repo_info, output_dir, unified_venv, args):
             working_dir = repo_manager.clone_repository(full_name, sha)
             repo_id = f"{full_name}@{sha}"
         else:
-            local_path = repo_info
-            working_dir = repo_manager.setup_local_repository(local_path)
+            local_path = Path(repo_info) if not isinstance(repo_info, Path) else repo_info
+            # Use the repository directly without copying
+            working_dir = repo_manager.use_local_repository(local_path)
             repo_id = str(local_path.resolve())
         
         result_data["repository"] = repo_id
@@ -740,7 +747,9 @@ def run_tests_parallel(repositories, output_dir, unified_venv, args):
                     if isinstance(repo, tuple):
                         repo_name = repo[0]  # GitHub repo name
                     else:
-                        repo_name = repo.name  # Local directory name
+                        # For Path objects or string paths
+                        path_obj = Path(repo) if not isinstance(repo, Path) else repo
+                        repo_name = path_obj.name  # Local directory name
                     
                     pbar.set_postfix_str(f"Processing {repo_name}")
                     result = future.result()
@@ -762,7 +771,12 @@ def run_tests_parallel(repositories, output_dir, unified_venv, args):
                         f.write(json.dumps(result) + '\n')
                     
                 except Exception as e:
-                    logger.error(f"Error processing {repo}: {str(e)}")
+                    # Handle error message formatting for both tuple and Path objects
+                    if isinstance(repo, tuple):
+                        repo_str = f"{repo[0]}@{repo[1]}"
+                    else:
+                        repo_str = str(repo)
+                    logger.error(f"Error processing {repo_str}: {str(e)}")
                 
                 pbar.update(1)
     
