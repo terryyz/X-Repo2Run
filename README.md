@@ -127,6 +127,7 @@ repo2run --global --local-list dirs.txt --output-dir output_path [options]
 | `--overwrite` | Overwrite existing output directory | Disabled | `--overwrite` |
 | `--use-uv` | Use UV for dependency management | Disabled (uses pip/venv) | `--use-uv` |
 | `--max-workers N` | Maximum number of worker threads | 4 | `--max-workers 8` |
+| `--repo-range START END` | Process only a specific range of repositories | None (all repos) | `--repo-range 0 100` |
 
 #### Output Files
 
@@ -162,6 +163,18 @@ python run_unified_pipeline.py --repo-list repos.txt --output-dir ./unified_outp
 
 # Or use the main command with global flag
 repo2run --global --repo-list repos.txt --output-dir ./unified_output --max-workers 8 --use-uv --verbose
+
+# Process only repositories from index 0 to 99 (first 100 repos) in the list
+repo2run --global --repo-list repos.txt --output-dir ./batch1_output --repo-range 0 100 --use-uv
+
+# Process repositories from index 100 to 199 (second 100 repos) in the list
+repo2run --global --repo-list repos.txt --output-dir ./batch2_output --repo-range 100 200 --use-uv
+
+# Distribute work across multiple machines or jobs by specifying different ranges
+# Example for a CI/CD pipeline that processes 500 repos in 5 parallel jobs
+# Job 1: repo2run --global --repo-list repos.txt --output-dir ./job1 --repo-range 0 100
+# Job 2: repo2run --global --repo-list repos.txt --output-dir ./job2 --repo-range 100 200
+# ... and so on
 ```
 
 ### Advanced Use Cases

@@ -26,6 +26,7 @@ Options:
     --overwrite            Overwrite existing output directory if it exists
     --use-uv               Use UV for dependency management (default: False, use pip/venv)
     --skip-processed       Skip repositories that have already been processed (based on repo_req.jsonl)
+    --repo-range START END Process only a range of repositories (e.g., 0 100 for repos 0-99). Zero-indexed.
 """
 
 import argparse
@@ -116,6 +117,13 @@ def parse_arguments():
         '--skip-processed',
         action='store_true',
         help='Skip repositories that have already been processed (based on repo_req.jsonl)'
+    )
+    parser.add_argument(
+        '--repo-range',
+        type=int,
+        nargs=2,
+        metavar=('START', 'END'),
+        help='Process only a range of repositories (e.g., 0 100 for repos 0-99). Zero-indexed.'
     )
     
     return parser.parse_args()
@@ -985,13 +993,12 @@ def filter_successful_repos(test_results):
 
 
 def main():
-    """Main entry point for the application."""
+    """Main entry point for the unified pipeline."""
     start_time = time.time()
     
-    # Parse arguments
     args = parse_arguments()
     
-    # Configure logging
+    # Configure logging for the main process
     logger = configure_process_logging(args.verbose)
     
     # Create output directory
@@ -1015,13 +1022,37 @@ def main():
             logger.error("No repositories to process. Exiting.")
             return 1
         
-        # Stage 1: Analyze dependencies across all repositories
+        # Apply repository range filter if specified
+        total_repos = len(repositories)
+        if args.repo_range is not None:
+            start_idx, end_idx = args.repo_range
+            
+            # Validate indices
+            if start_idx < 0:
+                logger.warning(f"Start index {start_idx} is negative. Using 0 instead.")
+                start_idx = 0
+            
+            if end_idx > total_repos:
+                logger.warning(f"End index {end_idx} exceeds the number of repositories ({total_repos}). Using {total_repos} instead.")
+                end_idx = total_repos
+            
+            if start_idx >= end_idx:
+                logger.error(f"Invalid range: start index {start_idx} must be less than end index {end_idx}.")
+                return 1
+            
+            # Apply the slice
+            repositories = repositories[start_idx:end_idx]
+            logger.info(f"Processing repository range [{start_idx}, {end_idx}) - {len(repositories)} repositories out of {total_repos} total")
+        else:
+            logger.info(f"Processing all {total_repos} repositories")
+        
+        # Stage 2: Analyze dependencies across all repositories
         logger.info("\n" + "=" * 40)
         logger.info("🔍 STAGE 2: ANALYZING DEPENDENCIES")
         logger.info("=" * 40)
         all_dependencies, repo_req_data = analyze_dependencies_parallel(repositories, output_dir, args)
         
-        # Stage 2: Create unified virtual environment with all dependencies
+        # Stage 3: Create unified virtual environment with all dependencies
         logger.info("\n" + "=" * 40)
         logger.info("🏗️ STAGE 3: CREATING UNIFIED ENVIRONMENT")
         logger.info("=" * 40)
@@ -1030,13 +1061,13 @@ def main():
             logger.error("Failed to create unified virtual environment. Exiting.")
             return 1
         
-        # Stage 3: Run tests for each repository
+        # Stage 4: Run tests for each repository
         logger.info("\n" + "=" * 40)
         logger.info("🧪 STAGE 4: RUNNING TESTS")
         logger.info("=" * 40)
         test_results = run_tests_parallel(repositories, output_dir, unified_venv, args)
         
-        # Stage 4: Filter repositories that pass all tests or have no tests
+        # Stage 5: Filter repositories that pass all tests or have no tests
         logger.info("\n" + "=" * 40)
         logger.info("🎯 STAGE 5: FILTERING SUCCESSFUL REPOSITORIES")
         logger.info("=" * 40)
@@ -1077,7 +1108,9 @@ def main():
         return 0
     
     except Exception as e:
-        logger.error(f"Error in main execution: {e}")
+        logger.error(f"Error in pipeline execution: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return 1
 
 

@@ -19,8 +19,8 @@ Usage:
     repo2run --local-list dirs.txt --output-dir output_path [--overwrite] [--verbose] [--num-workers N] [--skip-processed]
     
     # Global unified pipeline mode:
-    repo2run --global --repo-list repos.txt --output-dir output_path [--overwrite] [--verbose] [--max-workers N]
-    repo2run --global --local-list dirs.txt --output-dir output_path [--overwrite] [--verbose] [--max-workers N]
+    repo2run --global --repo-list repos.txt --output-dir output_path [--overwrite] [--verbose] [--max-workers N] [--repo-range START END]
+    repo2run --global --local-list dirs.txt --output-dir output_path [--overwrite] [--verbose] [--max-workers N] [--repo-range START END]
 
 Options:
     --repo FULL_NAME SHA    The full name of the repository (e.g., user/repo) and SHA
@@ -36,6 +36,7 @@ Options:
     --use-uv             Use UV for dependency management (default: False, use pip/venv)
     --num-workers N       Number of worker processes for parallel processing (default: number of CPU cores)
     --max-workers N       Number of worker threads for parallel processing in global mode (default: 4)
+    --repo-range START END Process only a range of repositories (e.g., 0 100 for repos 0-99). Zero-indexed. Only applies in global mode.
     --collect-only      Only collect test cases without installing dependencies or running tests
     --skip-processed    Skip repositories that have already been processed (default: False)
 """
@@ -160,6 +161,13 @@ def parse_arguments():
         help='Number of worker threads for parallel processing in global mode (default: 4)'
     )
     parser.add_argument(
+        '--repo-range',
+        type=int,
+        nargs=2,
+        metavar=('START', 'END'),
+        help='Process only a range of repositories (e.g., 0 100 for repos 0-99). Zero-indexed. Only applies in global mode.'
+    )
+    parser.add_argument(
         '--collect-only',
         action='store_true',
         help='Only collect test cases without installing dependencies or running tests'
@@ -197,6 +205,30 @@ def run_unified_pipeline(args):
         if not repositories:
             logger.error("No repositories to process. Exiting.")
             return 1
+        
+        # Apply repository range filter if specified
+        total_repos = len(repositories)
+        if hasattr(args, 'repo_range') and args.repo_range is not None:
+            start_idx, end_idx = args.repo_range
+            
+            # Validate indices
+            if start_idx < 0:
+                logger.warning(f"Start index {start_idx} is negative. Using 0 instead.")
+                start_idx = 0
+            
+            if end_idx > total_repos:
+                logger.warning(f"End index {end_idx} exceeds the number of repositories ({total_repos}). Using {total_repos} instead.")
+                end_idx = total_repos
+            
+            if start_idx >= end_idx:
+                logger.error(f"Invalid range: start index {start_idx} must be less than end index {end_idx}.")
+                return 1
+            
+            # Apply the slice
+            repositories = repositories[start_idx:end_idx]
+            logger.info(f"Processing repository range [{start_idx}, {end_idx}) - {len(repositories)} repositories out of {total_repos} total")
+        else:
+            logger.info(f"Processing all {total_repos} repositories")
         
         # Step 1: Analyze dependencies across all repositories
         all_dependencies, repo_req_data = analyze_dependencies_parallel(repositories, output_dir, args)
