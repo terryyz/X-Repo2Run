@@ -77,7 +77,8 @@ from repo2run.unified_pipeline import (
     analyze_dependencies_parallel,
     create_unified_environment,
     run_tests_parallel,
-    filter_successful_repos
+    filter_successful_repos,
+    build_dependencies_from_jsonl
 )
 
 
@@ -265,31 +266,68 @@ def run_unified_pipeline(args):
             logger.info("\n" + "=" * 40)
             logger.info("🔍 STAGE 1: ANALYZING DEPENDENCIES")
             logger.info("=" * 40)
+            
+            # Log information about skip-processed state
+            if args.skip_processed and args.extract_dep:
+                logger.info("Running in extract-dep mode with skip-processed enabled")
+                repo_req_jsonl = output_dir / "repo_req.jsonl"
+                if repo_req_jsonl.exists():
+                    logger.info(f"Will skip repositories already processed in {repo_req_jsonl}")
+                else:
+                    logger.info(f"No existing processed repositories found at {repo_req_jsonl}")
+            
             all_dependencies, repo_req_data = analyze_dependencies_parallel(repositories, output_dir, args)
             
-            # Save all_dependencies to file for later stages
-            deps_path = output_dir / "all_dependencies.json"
-            with open(deps_path, 'w') as f:
-                json.dump(list(all_dependencies), f, indent=2)
-            logger.info(f"Saved extracted dependencies to {deps_path}")
+            # In extract-dep mode, we don't save all_dependencies.json as it will be incomplete
+            # We'll rebuild it in config-venv stage
+            if not args.extract_dep:
+                # Save all_dependencies to file for later stages
+                deps_path = output_dir / "all_dependencies.json"
+                with open(deps_path, 'w') as f:
+                    json.dump(list(all_dependencies), f, indent=2)
+                logger.info(f"Saved extracted dependencies to {deps_path}")
+            else:
+                logger.info("Skipping saving all_dependencies.json in extract-dep mode (will be rebuilt in config-venv)")
             
             if args.extract_dep:
                 logger.info("Dependency extraction completed. Exiting as requested.")
                 return 0
         else:
-            # Load dependencies from file if not extracting
-            deps_path = output_dir / "all_dependencies.json"
-            if not deps_path.exists():
-                logger.error(f"Dependencies file not found at {deps_path}. Run with --extract-dep first.")
-                return 1
-            
-            try:
-                with open(deps_path, 'r') as f:
-                    all_dependencies = set(json.load(f))
-                logger.info(f"Loaded {len(all_dependencies)} dependencies from {deps_path}")
-            except Exception as e:
-                logger.error(f"Failed to load dependencies: {e}")
-                return 1
+            # When in config-venv mode, build dependencies from repo_req.jsonl
+            if args.config_venv:
+                logger.info("\n" + "=" * 40)
+                logger.info("🔍 REBUILDING DEPENDENCIES FROM JSONL")
+                logger.info("=" * 40)
+                
+                repo_req_jsonl = output_dir / "repo_req.jsonl"
+                if not repo_req_jsonl.exists():
+                    logger.error(f"Repository requirements file not found at {repo_req_jsonl}")
+                    logger.error("Run with --extract-dep first to generate repository requirements")
+                    return 1
+                
+                all_dependencies = build_dependencies_from_jsonl(output_dir)
+                if not all_dependencies:
+                    logger.warning("No dependencies found in repo_req.jsonl. The environment might be empty.")
+                
+                # Save all_dependencies to file for later stages
+                deps_path = output_dir / "all_dependencies.json"
+                with open(deps_path, 'w') as f:
+                    json.dump(list(all_dependencies), f, indent=2)
+                logger.info(f"Saved {len(all_dependencies)} rebuilt dependencies to {deps_path}")
+            else:
+                # For run-test mode, load dependencies from file
+                deps_path = output_dir / "all_dependencies.json"
+                if not deps_path.exists():
+                    logger.error(f"Dependencies file not found at {deps_path}. Run with --extract-dep and --config-venv first.")
+                    return 1
+                
+                try:
+                    with open(deps_path, 'r') as f:
+                        all_dependencies = set(json.load(f))
+                    logger.info(f"Loaded {len(all_dependencies)} dependencies from {deps_path}")
+                except Exception as e:
+                    logger.error(f"Failed to load dependencies: {e}")
+                    return 1
         
         # Step 2: Create unified virtual environment with all dependencies
         if args.config_venv or run_complete_pipeline:

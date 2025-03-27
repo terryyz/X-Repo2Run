@@ -208,19 +208,42 @@ def load_processed_repositories(output_dir):
     """
     processed_repos = set()
     repo_req_path = output_dir / "repo_req.jsonl"
+    logger = logging.getLogger(__name__)
     
-    if repo_req_path.exists():
-        try:
-            with open(repo_req_path, 'r') as f:
-                for line in f:
-                    try:
-                        record = json.loads(line.strip())
-                        if "repository" in record:
-                            processed_repos.add(record["repository"])
-                    except json.JSONDecodeError:
-                        continue  # Skip malformed lines
-        except Exception as e:
-            logging.getLogger(__name__).warning(f"Error reading repo_req.jsonl: {e}")
+    if not repo_req_path.exists():
+        logger.info(f"No existing repo_req.jsonl found at {repo_req_path}")
+        return processed_repos
+    
+    try:
+        with open(repo_req_path, 'r') as f:
+            line_count = 0
+            valid_records = 0
+            for line_number, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:  # Skip empty lines
+                    continue
+                    
+                try:
+                    record = json.loads(line)
+                    line_count += 1
+                    if "repository" in record:
+                        repo_id = record["repository"]
+                        processed_repos.add(repo_id)
+                        valid_records += 1
+                    else:
+                        logger.warning(f"Line {line_number}: Missing 'repository' field in JSON record")
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Line {line_number}: Invalid JSON: {str(e)}")
+                except Exception as e:
+                    logger.warning(f"Line {line_number}: Unexpected error: {str(e)}")
+        
+        if line_count > 0:
+            logger.info(f"Processed {line_count} lines from repo_req.jsonl: {valid_records} valid records")
+            logger.info(f"Found {len(processed_repos)} unique repository identifiers")
+        else:
+            logger.info(f"repo_req.jsonl exists but is empty or contains no valid records")
+    except Exception as e:
+        logger.warning(f"Error reading repo_req.jsonl: {str(e)}")
     
     return processed_repos
 
@@ -276,7 +299,9 @@ def extract_dependencies(repo_info, output_dir, args, repo_req_data, all_depende
             if match:
                 package_name = match.group(1).lower()
                 packages.add(package_name)
-                all_dependencies.add(package_name)  # Add to the global set
+                # Skip adding to all_dependencies in extract_dep mode
+                if not getattr(args, 'extract_dep', False):
+                    all_dependencies.add(package_name)  # Add to the global set
         
         # Store in repo_req_data (if it's a Manager dict)
         if hasattr(repo_req_data, '__setitem__'):
@@ -293,6 +318,46 @@ def extract_dependencies(repo_info, output_dir, args, repo_req_data, all_depende
     except Exception as e:
         logger.error(f"Failed to extract dependencies from {repo_info}: {str(e)}")
         return None, set()
+
+
+def build_dependencies_from_jsonl(output_dir):
+    """
+    Build the complete set of unique dependencies from repo_req.jsonl file.
+    
+    Args:
+        output_dir: Output directory containing repo_req.jsonl
+        
+    Returns:
+        set: Set of all unique dependencies across all repositories
+    """
+    logger = logging.getLogger(__name__)
+    all_deps = set()
+    jsonl_path = output_dir / "repo_req.jsonl"
+    
+    if not jsonl_path.exists():
+        logger.error(f"Repository requirements file not found at {jsonl_path}")
+        return all_deps
+    
+    try:
+        with open(jsonl_path, 'r') as f:
+            line_count = 0
+            for line in f:
+                try:
+                    record = json.loads(line.strip())
+                    if "dependencies" in record:
+                        dependencies = record["dependencies"]
+                        all_deps.update(dependencies)
+                        line_count += 1
+                except json.JSONDecodeError:
+                    logger.warning(f"Skipping malformed line in {jsonl_path}")
+                    continue
+        
+        logger.info(f"Built dependency set from {line_count} repositories in {jsonl_path}")
+        logger.info(f"Found {len(all_deps)} unique dependencies across all repositories")
+    except Exception as e:
+        logger.error(f"Error reading {jsonl_path}: {e}")
+    
+    return all_deps
 
 
 def analyze_dependencies_parallel(repositories, output_dir, args):
@@ -335,7 +400,11 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
         # If no new repositories to process, return early
         if not repositories:
             logger.info("No new repositories to process. Skipping dependency analysis.")
-            # Read all dependencies from requirements.txt if it exists
+            # In extract-dep mode, still return an empty set as we'll rebuild it later
+            if getattr(args, 'extract_dep', False):
+                return set(), {}
+                
+            # For other modes, read from existing dependencies
             all_dependencies = set()
             requirements_path = output_dir / "requirements.txt"
             if requirements_path.exists():
@@ -353,11 +422,12 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
     manager = Manager()
     repo_req_data = manager.dict()
     
-    # Set to store all unique dependencies (we'll update it incrementally)
+    # Set to store all unique dependencies
+    # Skip accumulating in all_dependencies in extract-dep mode to reduce overhead
     all_dependencies = set()
     
-    # If using skip-processed, read existing requirements.txt to initialize all_dependencies
-    if args.skip_processed:
+    # If using skip-processed and not in extract-dep mode, read existing requirements
+    if args.skip_processed and not getattr(args, 'extract_dep', False):
         requirements_path = output_dir / "requirements.txt"
         if requirements_path.exists():
             with open(requirements_path, 'r') as f:
@@ -427,6 +497,11 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
                         # Display what we found for this repository
                         repo_name = repo_id.split('@')[0] if '@' in repo_id else repo_id
                         pbar.set_postfix_str(f"Found {len(packages)} packages in {repo_name}")
+                    
+                        # In extract-dep mode, we don't need to keep updating all_dependencies
+                        # as we'll rebuild it in config-venv stage
+                        if not getattr(args, 'extract_dep', False):
+                            all_dependencies.update(packages)
                 except Exception as e:
                     # Handle error message formatting for both tuple and Path objects
                     if isinstance(repo, tuple):
@@ -439,6 +514,18 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
     
     # Convert manager dict to regular dict
     repo_req_data_dict = dict(repo_req_data)
+    
+    # If we're in extract-dep mode, we don't need to compute the full dependencies set
+    # since that will be done in config-venv stage
+    if getattr(args, 'extract_dep', False):
+        logger.info("Skipping unified dependencies computation in extract-dep mode")
+        return set(), repo_req_data_dict
+    
+    # For non-extract-dep modes:
+    # Ensure we have all dependencies by building from JSONL if needed
+    if len(all_dependencies) == 0:
+        logger.info("Building complete dependency set from JSONL file")
+        all_dependencies = build_dependencies_from_jsonl(output_dir)
     
     # Save all dependencies to requirements.txt
     requirements_path = output_dir / "requirements.txt"
