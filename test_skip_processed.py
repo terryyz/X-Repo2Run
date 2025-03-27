@@ -165,7 +165,7 @@ def main():
         # Check that the original repositories were skipped and only the new one was processed
         skipped_count = 0
         for repo_name in ["repo1", "repo2", "repo3"]:
-            repo_path = str(repo_dirs[repo_name].resolve())
+            repo_path = str(repo_dirs[repo_name].absolute())
             if f"Skipping already processed repository: {repo_path}" in output:
                 skipped_count += 1
                 logger.info(f"Repository {repo_name} was correctly skipped")
@@ -173,7 +173,7 @@ def main():
                 logger.warning(f"Repository {repo_name} was not skipped as expected")
         
         # Check if the new repository was processed
-        new_repo_path = str(repo_dirs[new_repo_name].resolve())
+        new_repo_path = str(repo_dirs[new_repo_name].absolute())
         new_repo_processed = new_repo_path in new_processed_repos
         if new_repo_processed:
             logger.info(f"New repository {new_repo_name} was correctly processed")

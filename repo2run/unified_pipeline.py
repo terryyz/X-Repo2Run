@@ -278,7 +278,8 @@ def extract_dependencies(repo_info, output_dir, args, repo_req_data, all_depende
             local_path = Path(repo_info) if not isinstance(repo_info, Path) else repo_info
             # Use the repository directly without copying
             working_dir = repo_manager.use_local_repository(local_path)
-            repo_id = str(local_path.resolve())
+            # Use absolute path without resolving symlinks for better performance
+            repo_id = str(local_path.absolute())
         
         # Extract dependencies
         dependency_extractor = DependencyExtractor(working_dir, logger=logger)
@@ -387,7 +388,8 @@ def analyze_dependencies_parallel(repositories, output_dir, args):
             if isinstance(repo, tuple):
                 repo_id = f"{repo[0]}@{repo[1]}"
             else:
-                repo_id = str(Path(repo).resolve())
+                # Use absolute path without resolving symlinks for better performance
+                repo_id = str(repo)
                 
             if repo_id not in processed_repos:
                 repositories_to_process.append(repo)
@@ -784,7 +786,8 @@ def run_tests_for_repo(repo_info, output_dir, unified_venv, args):
             local_path = Path(repo_info) if not isinstance(repo_info, Path) else repo_info
             # Use the repository directly without copying
             working_dir = repo_manager.use_local_repository(local_path)
-            repo_id = str(local_path.resolve())
+            # Use absolute path without resolving symlinks for better performance
+            repo_id = str(local_path.absolute())
         
         result_data["repository"] = repo_id
         add_log_entry(f"Processing repository: {repo_id}")
