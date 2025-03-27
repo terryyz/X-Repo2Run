@@ -601,7 +601,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
         full_name, sha = repo_info
         repo_identifier = f"{full_name}@{sha}"
     elif local_path:
-        local_path_resolved = Path(local_path).resolve()
+        local_path_resolved = Path(local_path)
         repo_identifier = str(local_path_resolved)
     
     # We no longer need to check if the repository is already processed here
@@ -676,7 +676,7 @@ def process_single_repo(args: argparse.Namespace, repo_info: Optional[Tuple[str,
             dir_identifier = f"{full_name.replace('/', '_')}_{sha[:7]}"  # Use shorter SHA
             result_data["repository_identifier"] = dir_identifier
         else:
-            local_path = Path(local_path).resolve()
+            local_path = Path(local_path)
             working_dir = repo_manager.setup_local_repository(local_path)
             repo_name = working_dir.name
             add_log_entry(f"Set up local repository from {local_path}", repo_name=repo_name)
@@ -1401,7 +1401,7 @@ def process_local_list(args: argparse.Namespace) -> int:
         # Filter out already processed repositories
         filtered_dir_paths = []
         for dir_path in dir_paths:
-            repo_identifier = str(Path(dir_path).resolve())
+            repo_identifier = str(Path(dir_path).absolute())
             if repo_identifier not in processed_repos:
                 filtered_dir_paths.append(dir_path)
             else:
