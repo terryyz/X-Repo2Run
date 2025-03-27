@@ -16,6 +16,19 @@ Usage:
     # Process local directories from a list file
     python -m repo2run.unified_pipeline --local-list dirs.txt --output-dir output_path [--overwrite] [--verbose]
 
+Note:
+    The pipeline can also be accessed through the main CLI with the --global flag.
+    When using the main CLI, the pipeline can be run in separate stages:
+    
+    # Stage 1: Extract dependencies
+    repo2run --global --repo-list repos.txt --output-dir output_path --extract-dep
+    
+    # Stage 2: Configure virtual environment
+    repo2run --global --repo-list repos.txt --output-dir output_path --config-venv
+    
+    # Stage 3: Run tests
+    repo2run --global --repo-list repos.txt --output-dir output_path --run-test
+
 Options:
     --repo-list FILE       Text file containing list of repositories (format: user/repo sha)
     --local-list FILE      Text file containing list of local directories

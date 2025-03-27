@@ -18,9 +18,14 @@ Usage:
     repo2run --repo-list repos.txt --output-dir output_path [--overwrite] [--verbose] [--num-workers N] [--skip-processed]
     repo2run --local-list dirs.txt --output-dir output_path [--overwrite] [--verbose] [--num-workers N] [--skip-processed]
     
-    # Global unified pipeline mode:
+    # Global unified pipeline mode (complete):
     repo2run --global --repo-list repos.txt --output-dir output_path [--overwrite] [--verbose] [--max-workers N] [--repo-range START END]
     repo2run --global --local-list dirs.txt --output-dir output_path [--overwrite] [--verbose] [--max-workers N] [--repo-range START END]
+    
+    # Global unified pipeline mode (separate stages):
+    repo2run --global --repo-list repos.txt --output-dir output_path --extract-dep
+    repo2run --global --repo-list repos.txt --output-dir output_path --config-venv
+    repo2run --global --repo-list repos.txt --output-dir output_path --run-test
 
 Options:
     --repo FULL_NAME SHA    The full name of the repository (e.g., user/repo) and SHA
@@ -39,6 +44,9 @@ Options:
     --repo-range START END Process only a range of repositories (e.g., 0 100 for repos 0-99). Zero-indexed. Only applies in global mode.
     --collect-only      Only collect test cases without installing dependencies or running tests
     --skip-processed    Skip repositories that have already been processed (default: False)
+    --extract-dep       Only extract dependencies from repositories (Stage 1 of global pipeline)
+    --config-venv       Only configure the virtual environment with extracted dependencies (Stage 2 of global pipeline)
+    --run-test          Only run tests using the configured virtual environment (Stage 3 of global pipeline)
 """
 
 import argparse
@@ -112,6 +120,24 @@ def parse_arguments():
         dest='global_mode',
         action='store_true',
         help='Use the unified global pipeline (single environment for all repositories)'
+    )
+    
+    # Pipeline stage flags - for global mode
+    pipeline_group = parser.add_argument_group('Pipeline Stages (for --global mode)')
+    pipeline_group.add_argument(
+        '--extract-dep',
+        action='store_true',
+        help='Only extract dependencies from repositories (Stage 1)'
+    )
+    pipeline_group.add_argument(
+        '--config-venv',
+        action='store_true',
+        help='Only configure the virtual environment with extracted dependencies (Stage 2)'
+    )
+    pipeline_group.add_argument(
+        '--run-test',
+        action='store_true',
+        help='Only run tests using the configured virtual environment (Stage 3)'
     )
     
     # Additional arguments
@@ -230,33 +256,105 @@ def run_unified_pipeline(args):
         else:
             logger.info(f"Processing all {total_repos} repositories")
         
+        # Check which stage of the pipeline to run
+        # If no specific stage is requested, run the complete pipeline
+        run_complete_pipeline = not (args.extract_dep or args.config_venv or args.run_test)
+        
         # Step 1: Analyze dependencies across all repositories
-        all_dependencies, repo_req_data = analyze_dependencies_parallel(repositories, output_dir, args)
+        if args.extract_dep or run_complete_pipeline:
+            logger.info("\n" + "=" * 40)
+            logger.info("🔍 STAGE 1: ANALYZING DEPENDENCIES")
+            logger.info("=" * 40)
+            all_dependencies, repo_req_data = analyze_dependencies_parallel(repositories, output_dir, args)
+            
+            # Save all_dependencies to file for later stages
+            deps_path = output_dir / "all_dependencies.json"
+            with open(deps_path, 'w') as f:
+                json.dump(list(all_dependencies), f, indent=2)
+            logger.info(f"Saved extracted dependencies to {deps_path}")
+            
+            if args.extract_dep:
+                logger.info("Dependency extraction completed. Exiting as requested.")
+                return 0
+        else:
+            # Load dependencies from file if not extracting
+            deps_path = output_dir / "all_dependencies.json"
+            if not deps_path.exists():
+                logger.error(f"Dependencies file not found at {deps_path}. Run with --extract-dep first.")
+                return 1
+            
+            try:
+                with open(deps_path, 'r') as f:
+                    all_dependencies = set(json.load(f))
+                logger.info(f"Loaded {len(all_dependencies)} dependencies from {deps_path}")
+            except Exception as e:
+                logger.error(f"Failed to load dependencies: {e}")
+                return 1
         
         # Step 2: Create unified virtual environment with all dependencies
-        unified_venv, install_status = create_unified_environment(all_dependencies, output_dir, args)
-        if not unified_venv:
-            logger.error("Failed to create unified virtual environment. Exiting.")
-            return 1
+        if args.config_venv or run_complete_pipeline:
+            logger.info("\n" + "=" * 40)
+            logger.info("🏗️ STAGE 2: CREATING UNIFIED ENVIRONMENT")
+            logger.info("=" * 40)
+            unified_venv, install_status = create_unified_environment(all_dependencies, output_dir, args)
+            if not unified_venv:
+                logger.error("Failed to create unified virtual environment. Exiting.")
+                return 1
+            
+            # Save venv path for later stages
+            venv_path_file = output_dir / "venv_path.txt"
+            with open(venv_path_file, 'w') as f:
+                f.write(str(unified_venv))
+            logger.info(f"Saved virtual environment path to {venv_path_file}")
+            
+            if args.config_venv:
+                logger.info("Virtual environment configuration completed. Exiting as requested.")
+                return 0
+        else:
+            # Load venv path from file if not configuring
+            venv_path_file = output_dir / "venv_path.txt"
+            if not venv_path_file.exists():
+                logger.error(f"Virtual environment path file not found at {venv_path_file}. Run with --config-venv first.")
+                return 1
+            
+            try:
+                with open(venv_path_file, 'r') as f:
+                    unified_venv = Path(f.read().strip())
+                if not unified_venv.exists():
+                    logger.error(f"Virtual environment not found at {unified_venv}.")
+                    return 1
+                logger.info(f"Using existing virtual environment at {unified_venv}")
+            except Exception as e:
+                logger.error(f"Failed to load virtual environment path: {e}")
+                return 1
         
         # Step 3: Run tests for each repository
-        test_results = run_tests_parallel(repositories, output_dir, unified_venv, args)
-        
-        # Step 4: Filter repositories that pass all tests or have no tests
-        successful_repos = filter_successful_repos(test_results)
-        
-        # Save the list of successful repositories
-        successful_repos_path = output_dir / "successful_repos.json"
-        with open(successful_repos_path, 'w') as f:
-            json.dump(successful_repos, f, indent=2)
-        
-        logger.info(f"Found {len(successful_repos)} repositories that pass all tests or have no tests")
-        logger.info(f"Successful repositories saved to {successful_repos_path}")
+        if args.run_test or run_complete_pipeline:
+            logger.info("\n" + "=" * 40)
+            logger.info("🧪 STAGE 3: RUNNING TESTS")
+            logger.info("=" * 40)
+            test_results = run_tests_parallel(repositories, output_dir, unified_venv, args)
+            
+            # Step 4: Filter repositories that pass all tests or have no tests
+            logger.info("\n" + "=" * 40)
+            logger.info("🎯 STAGE 4: FILTERING SUCCESSFUL REPOSITORIES")
+            logger.info("=" * 40)
+            successful_repos = filter_successful_repos(test_results)
+            
+            # Save the list of successful repositories
+            successful_repos_path = output_dir / "successful_repos.json"
+            with open(successful_repos_path, 'w') as f:
+                json.dump(successful_repos, f, indent=2)
+            
+            logger.info(f"Found {len(successful_repos)} repositories that pass all tests or have no tests")
+            logger.info(f"Successful repositories saved to {successful_repos_path}")
         
         return 0
     
     except Exception as e:
         logger.error(f"Error in global pipeline execution: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return 1
 
 
