@@ -65,7 +65,7 @@ class TestRunner:
     
     def find_tests(self):
         """
-        Find test files in the repository.
+        Find all Python test files in the repository.
         
         Returns:
             list: List of test file paths.
@@ -76,19 +76,60 @@ class TestRunner:
         
         # Search recursively for test files
         test_patterns = [
+            # Standard test directory patterns
+            "**/tests/**/*.py",
+            "**/test/**/*.py",
+            
+            # Common test file naming patterns
             "**/tests/**/*test*.py",
             "**/test/**/*test*.py",
             "**/tests/**/*_test.py",
             "**/test/**/*_test.py",
             "**/test_*.py",
             "**/*_test.py",
+            
+            # Framework-specific patterns
+            "**/pytest/**/*.py",
+            "**/pytests/**/*.py",
+            "**/*pytest*.py",
+            
+            # Unit test patterns
+            "**/*unittest*.py",
+            "**/*_unittest.py",
+            "**/unittest*.py",
+            
+            # Integration and functional test patterns
+            "**/*integration*test*.py",
+            "**/*functional*test*.py",
+            
+            # Include general files in test directories
             "**/test/*.py",
-            "**/tests/*.py"
+            "**/tests/*.py",
+            
+            # More specific patterns for different test frameworks
+            "**/*spec.py",        # Common in some testing frameworks
+            "**/*conftest*.py",   # pytest configuration files
+            "**/cases/**/*.py",   # Sometimes tests are in 'cases' directories
+            "**/testcases/**/*.py", 
+            "**/testcase/**/*.py",
+            
+            # Additional patterns for different naming conventions
+            "**/*check*.py",      # Some projects use "check" instead of "test"
+            "**/*suite*.py"       # Test suites
         ]
         
         # Files to exclude (paths containing these shouldn't be included)
-        exclude_patterns = ['.venv', 'site-packages', 'dist-packages']
+        exclude_patterns = [
+            '.venv', 
+            'site-packages', 
+            'dist-packages', 
+            'build',
+            '__pycache__',
+            '.egg-info',
+            'node_modules'
+        ]
         
+        # First pass: find files based on patterns
         for pattern in test_patterns:
             found_files = list(self.repo_path.glob(pattern))
             
@@ -103,6 +144,128 @@ class TestRunner:
             
             self.logger.info(f"Pattern {pattern} found {len(filtered_files)} files (after filtering)")
             test_files.extend(filtered_files)
+        
+        # Second pass: content-based detection for files that might be tests but don't match our patterns
+        if len(test_files) < 10:  # Increased limit to analyze more files when few patterns match
+            self.logger.info("Performing content-based test file detection")
+            py_files = list(self.repo_path.glob("**/*.py"))
+            
+            # More comprehensive set of test indicators with weighted scores
+            test_indicators = {
+                # Strong indicators (high score)
+                'import unittest': 3,
+                'import pytest': 3,
+                'from unittest': 3,
+                'from pytest': 3,
+                'class Test': 3,
+                'class.*Test': 2,
+                'class.*TestCase': 3,
+                '@pytest': 3,
+                'pytest.fixture': 3,
+                
+                # Medium indicators
+                'unittest.TestCase': 2,
+                'def test_': 2,
+                'test_.*\(': 2,  # Function calls starting with test_
+                '\stest\(': 2,
+                'mock': 1,
+                'patch': 1,
+                'MagicMock': 2,
+                
+                # Assertion methods (weaker, but indicative)
+                'self.assert': 1,
+                'self.assertEqual': 1,
+                'self.assertTrue': 1,
+                'self.assertFalse': 1,
+                'self.assertRaises': 1,
+                'assert ': 1,
+                'assertIn': 1,
+                'assertNotIn': 1,
+                'assertIs': 1,
+                'assertIsNot': 1
+            }
+            
+            # Keep track of files we've added to avoid duplicates
+            added_files = set(test_files)
+            additional_test_files = []
+            
+            for py_file in py_files:
+                # Skip if already in test_files
+                if py_file in added_files:
+                    continue
+                
+                # Skip if in exclude patterns
+                relative_path = py_file.relative_to(self.repo_path)
+                str_path = str(relative_path).lower()
+                if any(excl in str_path for excl in exclude_patterns):
+                    continue
+                
+                # Skip very large files to avoid memory issues
+                try:
+                    if py_file.stat().st_size > 500 * 1024:  # 500KB limit
+                        self.logger.debug(f"Skipping large file for content analysis: {relative_path}")
+                        continue
+                        
+                    # Check file content for test indicators
+                    with open(py_file, 'r', encoding='utf-8', errors='replace') as f:
+                        content = f.read()
+                    
+                    # Content too short is likely not a test file
+                    if len(content) < 50:
+                        continue
+                        
+                    # Use regex to search for patterns more accurately
+                    import re
+                    test_score = 0
+                    
+                    for pattern, score in test_indicators.items():
+                        if re.search(pattern, content):
+                            test_score += score
+                    
+                    # Adjust threshold based on file location and name
+                    base_threshold = 3
+                    
+                    # Lower threshold for files in test-like directories or with test in name
+                    if 'test' in str_path or 'tests' in str_path:
+                        threshold = base_threshold - 1
+                    # Check if file has 'test' in name (but not in directory)
+                    elif 'test' in py_file.name.lower():
+                        threshold = base_threshold - 1
+                    # Higher threshold for files with no test indicators in path
+                    else:
+                        threshold = base_threshold + 1
+                    
+                    # Add extra points for file name/path indicators
+                    file_name = py_file.name.lower()
+                    if file_name.startswith('test_'):
+                        test_score += 2
+                    elif file_name.endswith('_test.py'):
+                        test_score += 2
+                    elif 'test' in file_name:
+                        test_score += 1
+                    
+                    # Add bonus for files that contain the word "test" 
+                    # or "assert" multiple times
+                    test_count = len(re.findall(r'\btest\b', content.lower()))
+                    if test_count > 5:
+                        test_score += 1
+                    
+                    assert_count = len(re.findall(r'\bassert', content.lower()))
+                    if assert_count > 5:
+                        test_score += 1
+                    
+                    # If score meets threshold, consider it a test file
+                    if test_score >= threshold:
+                        self.logger.info(f"Detected test file via content analysis (score: {test_score}): {relative_path}")
+                        additional_test_files.append(py_file)
+                        added_files.add(py_file)
+                        
+                except Exception as e:
+                    self.logger.debug(f"Error analyzing {py_file}: {e}")
+            
+            # Add the additional test files found
+            test_files.extend(additional_test_files)
+            self.logger.info(f"Content analysis found {len(additional_test_files)} additional test files")
         
         # Remove duplicates and sort
         test_files = sorted(set(test_files))

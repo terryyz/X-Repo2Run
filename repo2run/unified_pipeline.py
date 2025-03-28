@@ -139,6 +139,13 @@ def parse_arguments():
         help='Process only a range of repositories (e.g., 0 100 for repos 0-99). Zero-indexed.'
     )
     
+    # Add extract-tests flag
+    parser.add_argument(
+        '--extract-tests',
+        action='store_true',
+        help='Extract test files from repositories and write them to test.jsonl (repositories will not be copied to output folder and results.jsonl will not be generated)'
+    )
+    
     return parser.parse_args()
 
 
