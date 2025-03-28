@@ -27,6 +27,8 @@ setup(
     install_requires=[
         "tomli>=2.0.0",
         "pyyaml>=6.0",
+        "pytest>=7.0.0",
+        "pipreqs>=0.4.11",
     ],
     extras_require={
         "uv": ["uv>=0.1.0"],
