@@ -2296,11 +2296,8 @@ def process_test_repo(args: argparse.Namespace, repo_data: Dict, workspace_dir: 
                     
                     # Always print the actual command output for debugging
                     logger.error("Test command output:")
-                    for line in error_lines[:min(20, len(error_lines))]:
+                    for line in error_lines:
                         logger.error(f"  {line}")
-                    
-                    if len(error_lines) > 20:
-                        logger.error("  ... (truncated, showing error details below)")
                     
                     # Focus on showing the actual error part rather than the full output
                     error_excerpt = []
@@ -2315,10 +2312,8 @@ def process_test_repo(args: argparse.Namespace, repo_data: Dict, workspace_dir: 
                     # If we found an error section, print it (up to 50 lines)
                     if error_excerpt:
                         logger.error("Error details:")
-                        for line in error_excerpt[:50]:
+                        for line in error_excerpt:
                             logger.error(f"  {line}")
-                        if len(error_excerpt) > 50:
-                            logger.error(f"  ... (truncated, full error in test_results.jsonl)")
                     # If no specific error section found, print the last part of the output
                     else:
                         logger.error("Last lines of output:")
@@ -2762,10 +2757,8 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
                     # If we found an error section, print it (up to 50 lines)
                     if error_excerpt:
                         logger.error("Error details:")
-                        for line in error_excerpt[:50]:
+                        for line in error_excerpt:
                             logger.error(f"  {line}")
-                        if len(error_excerpt) > 50:
-                            logger.error(f"  ... (truncated, full error in test_results.jsonl)")
                     # If no specific error section found, print the last part of the output
                     else:
                         logger.error("Last lines of output:")
