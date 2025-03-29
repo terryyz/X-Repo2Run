@@ -2293,25 +2293,36 @@ def process_test_repo(args: argparse.Namespace, repo_data: Dict, workspace_dir: 
                     add_log_entry(f"Test failure details for {test_file.relative_to(repo_workspace)}:", level="ERROR")
                     # Print a reasonable amount of the error message, capped to avoid overwhelming output
                     error_lines = (result.stdout + "\n" + result.stderr).split("\n")
+                    
+                    # Always print the actual command output for debugging
+                    logger.error("Test command output:")
+                    for line in error_lines[:min(20, len(error_lines))]:
+                        logger.error(f"  {line}")
+                    
+                    if len(error_lines) > 20:
+                        logger.error("  ... (truncated, showing error details below)")
+                    
                     # Focus on showing the actual error part rather than the full output
                     error_excerpt = []
                     # Find error sections in the output - look for Traceback or FAILED
                     error_section_found = False
                     for line in error_lines:
-                        if "Traceback" in line or "FAILED" in line or "Error" in line:
+                        if "Traceback" in line or "FAILED" in line or "Error" in line or "ImportError" in line:
                             error_section_found = True
                         if error_section_found:
                             error_excerpt.append(line)
                     
                     # If we found an error section, print it (up to 50 lines)
                     if error_excerpt:
+                        logger.error("Error details:")
                         for line in error_excerpt[:50]:
                             logger.error(f"  {line}")
                         if len(error_excerpt) > 50:
                             logger.error(f"  ... (truncated, full error in test_results.jsonl)")
                     # If no specific error section found, print the last part of the output
                     else:
-                        for line in error_lines[-min(50, len(error_lines)):]:
+                        logger.error("Last lines of output:")
+                        for line in error_lines[-min(30, len(error_lines)):]:
                             logger.error(f"  {line}")
             except subprocess.TimeoutExpired:
                 add_log_entry(f"Test {test_file.relative_to(repo_workspace)} timed out after {timeout} seconds", level="WARNING")
@@ -2352,6 +2363,32 @@ def process_test_repo(args: argparse.Namespace, repo_data: Dict, workspace_dir: 
         else:
             result_data["status"] = "failure"
             add_log_entry(f"All {failed_tests + error_tests} tests failed")
+            
+            # In verbose mode, print a summary of the failures
+            if args.verbose:
+                add_log_entry("=== TEST FAILURE SUMMARY ===", level="ERROR")
+                for i, test_result in enumerate(test_results):
+                    if test_result["status"] != "success":
+                        add_log_entry(f"Test #{i+1}: {test_result['name']} - {test_result['status']}", level="ERROR")
+                        
+                        # Extract the key error message if possible
+                        message = test_result["message"]
+                        error_lines = message.split("\n")
+                        error_extract = ""
+                        
+                        # Look for common error indicators
+                        for line in error_lines:
+                            if "ImportError:" in line or "ModuleNotFoundError:" in line or "AssertionError:" in line:
+                                error_extract = line.strip()
+                                break
+                        
+                        if error_extract:
+                            add_log_entry(f"  Error: {error_extract}", level="ERROR")
+                        else:
+                            # If no specific error found, provide a general note
+                            add_log_entry(f"  See detailed logs for error information", level="ERROR")
+                
+                add_log_entry("=== END OF FAILURE SUMMARY ===", level="ERROR")
         
         # Generate summary
         end_time = time.time()
@@ -2437,6 +2474,7 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
                 logger.info("Successfully installed Faker package.")
             except Exception as e:
                 logger.error(f"Failed to install Faker package: {e}")
+
     
     # Verify output directory and test.jsonl exist
     output_dir = Path(args.output_dir)
@@ -2671,13 +2709,20 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
                 # Set timeout if specified
                 timeout = args.timeout if hasattr(args, 'timeout') else None
                 
-                # Run the test with subprocess in the repository directory
+                # Set up environment to add repo path to PYTHONPATH
+                env = os.environ.copy()
+                env["PYTHONPATH"] = str(repo_path) + os.pathsep + env.get("PYTHONPATH", "")
+                
+                add_log_entry(f"Running with PYTHONPATH: {env['PYTHONPATH']}")
+                
+                # Run the test with subprocess in the repository directory with proper environment
                 result = subprocess.run(
                     cmd,
                     cwd=repo_path,
                     capture_output=True,
                     text=True,
-                    timeout=timeout
+                    timeout=timeout,
+                    env=env
                 )
                 
                 # Determine status
@@ -2698,25 +2743,36 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
                     add_log_entry(f"Test failure details for {test_path}:", level="ERROR")
                     # Print a reasonable amount of the error message, capped to avoid overwhelming output
                     error_lines = (result.stdout + "\n" + result.stderr).split("\n")
+                    
+                    # Always print the actual command output for debugging
+                    logger.error("Test command output:")
+                    for line in error_lines[:min(20, len(error_lines))]:
+                        logger.error(f"  {line}")
+                    
+                    if len(error_lines) > 20:
+                        logger.error("  ... (truncated, showing error details below)")
+                    
                     # Focus on showing the actual error part rather than the full output
                     error_excerpt = []
                     # Find error sections in the output - look for Traceback or FAILED
                     error_section_found = False
                     for line in error_lines:
-                        if "Traceback" in line or "FAILED" in line or "Error" in line:
+                        if "Traceback" in line or "FAILED" in line or "Error" in line or "ImportError" in line:
                             error_section_found = True
                         if error_section_found:
                             error_excerpt.append(line)
                     
                     # If we found an error section, print it (up to 50 lines)
                     if error_excerpt:
+                        logger.error("Error details:")
                         for line in error_excerpt[:50]:
                             logger.error(f"  {line}")
                         if len(error_excerpt) > 50:
                             logger.error(f"  ... (truncated, full error in test_results.jsonl)")
                     # If no specific error section found, print the last part of the output
                     else:
-                        for line in error_lines[-min(50, len(error_lines)):]:
+                        logger.error("Last lines of output:")
+                        for line in error_lines[-min(30, len(error_lines)):]:
                             logger.error(f"  {line}")
             except subprocess.TimeoutExpired:
                 add_log_entry(f"Test {test_path} timed out after {timeout} seconds", level="WARNING")
