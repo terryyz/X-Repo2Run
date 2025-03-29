@@ -2365,8 +2365,8 @@ def process_test_repo(args: argparse.Namespace, repo_data: Dict, workspace_dir: 
 def run_tests_from_jsonl(args: argparse.Namespace) -> int:
     """
     Run tests from previously extracted test.jsonl file without creating virtual environments.
-    Tests will be run using pytest with the system Python interpreter, with PYTHONPATH configured
-    to properly resolve cross-file module imports.
+    Tests will be run using pytest with the system Python interpreter directly in the repository directories
+    where the tests were originally located.
     
     Args:
         args: Command line arguments
@@ -2403,17 +2403,7 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
     # Initialize test_results.jsonl file
     test_results_jsonl_path = output_dir / "test_results.jsonl"
     logger.info(f"Test results will be written to {test_results_jsonl_path}")
-    logger.info("Note: Tests will be run using pytest with PYTHONPATH configured to resolve cross-file imports")
-    
-    # Create a directory for test workspaces
-    workspace_dir = args.workspace_dir
-    if workspace_dir is None:
-        workspace_dir = tempfile.mkdtemp(prefix="repo2run_test_")
-        logger.info(f"Created temporary workspace directory: {workspace_dir}")
-    else:
-        workspace_dir = Path(workspace_dir)
-        workspace_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Using specified workspace directory: {workspace_dir}")
+    logger.info("Note: Tests will be run directly in their original repository directories using pytest")
     
     # Track repositories with their test data
     repositories = []
@@ -2432,40 +2422,179 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
     
     logger.info(f"Found {len(repositories)} repositories with test data")
     
-    # Check if we should use multiprocessing
-    if len(repositories) > 1 and args.num_workers > 1:
-        logger.info(f"Using {args.num_workers} worker processes for parallel processing")
+    # Process repositories
+    any_failed = False
+    for i, repo_data in enumerate(repositories):
+        repo_identifier = repo_data.get("repository", f"unknown_repo_{i}")
+        logger.info(f"Processing repository {i+1}/{len(repositories)}: {repo_identifier}")
         
-        # Process repositories in parallel with multiprocessing
-        with multiprocessing.Pool(processes=args.num_workers) as pool:
-            # Create argument tuples for each repository
-            arg_tuples = [(args, repo, workspace_dir, i) for i, repo in enumerate(repositories)]
+        # Extract the repository path from the identifier
+        # Format could be username/repo@sha for GitHub repos or just a local path
+        repo_path = None
+        if "/" in repo_identifier and "@" in repo_identifier:
+            # This is a GitHub repo, we need to find where it was cloned
+            logger.warning(f"Repository {repo_identifier} is a GitHub repo. Cannot directly access the original directory.")
+            logger.warning("Skipping this repository as we can't run tests in the original directory.")
+            continue
+        else:
+            # Local repository path
+            repo_path = Path(repo_identifier)
+            if not repo_path.exists():
+                logger.warning(f"Repository directory {repo_path} does not exist. Skipping.")
+                continue
+        
+        # Initialize result data structure
+        start_time = time.time()
+        result_data = {
+            "repository": repo_identifier,
+            "status": "running",
+            "tests": {
+                "found": len(repo_data.get("tests", [])),
+                "passed": 0,
+                "failed": 0,
+                "skipped": 0,
+                "details": []
+            },
+            "execution": {
+                "start_time": start_time,
+                "elapsed_time": 0
+            },
+            "logs": []
+        }
+        
+        def add_log_entry(message: str, level: str = "INFO", **kwargs):
+            """Add a log entry to both the logger and result data."""
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log_entry = {
+                "timestamp": timestamp,
+                "level": level,
+                "message": message,
+                **kwargs
+            }
+            result_data["logs"].append(log_entry)
             
-            # Process repositories in parallel with progress bar
-            pbar = tqdm(total=len(repositories), desc="Running tests", unit="repo")
-            results = []
+            if level == "INFO":
+                logger.info(message)
+            elif level == "WARNING":
+                logger.warning(message)
+            elif level == "ERROR":
+                logger.error(message)
+        
+        tests = repo_data.get("tests", [])
+        if not tests:
+            add_log_entry(f"No tests found for repository: {repo_identifier}", level="WARNING")
+            result_data["status"] = "skip"
+            result_data["tests"]["found"] = 0
             
-            # Use imap_unordered for better real-time progress updates
-            for result in pool.imap_unordered(_process_test_repo_wrapper, arg_tuples):
-                results.append(result)
-                pbar.update(1)
+            # Write the result to test_results.jsonl
+            with open(test_results_jsonl_path, "a") as f:
+                f.write(json.dumps(result_data) + "\n")
             
-            pbar.close()
+            continue
         
-        # Check if any process failed
-        return 1 if any(result != 0 for result in results) else 0
-    else:
-        # Process repositories sequentially
-        logger.info("Processing repositories sequentially")
+        add_log_entry(f"Found {len(tests)} test files in repository")
         
-        any_failed = False
-        for i, repo in enumerate(repositories):
-            logger.info(f"Processing repository {i+1}/{len(repositories)}: {repo.get('repository', 'unknown')}")
-            result = process_test_repo(args, repo, workspace_dir, i)
-            if result != 0:
-                any_failed = True
+        # Run tests directly in the original repository
+        test_results = []
+        for test_info in tests:
+            test_path = test_info.get("path")
+            if not test_path:
+                add_log_entry(f"Invalid test info, missing path: {test_info}", level="WARNING")
+                continue
+            
+            # Build the full path to the test file
+            full_test_path = repo_path / test_path
+            if not full_test_path.exists():
+                add_log_entry(f"Test file not found at {full_test_path}. Skipping.", level="WARNING")
+                continue
+            
+            add_log_entry(f"Running test file: {test_path}")
+            
+            # Use pytest to run the test
+            cmd = [sys.executable, "-m", "pytest", str(test_path), "-v"]
+            
+            try:
+                # Set timeout if specified
+                timeout = args.timeout if hasattr(args, 'timeout') else None
+                
+                # Run the test with subprocess in the repository directory
+                result = subprocess.run(
+                    cmd,
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout
+                )
+                
+                # Determine status
+                status = "success" if result.returncode == 0 else "failure"
+                
+                # Store the result
+                test_results.append({
+                    "name": test_path,
+                    "status": status,
+                    "message": result.stdout + "\n" + result.stderr,
+                    "returncode": result.returncode
+                })
+                
+                add_log_entry(f"Test {test_path} completed with status: {status}")
+            except subprocess.TimeoutExpired:
+                add_log_entry(f"Test {test_path} timed out after {timeout} seconds", level="WARNING")
+                test_results.append({
+                    "name": test_path,
+                    "status": "failure",
+                    "message": f"Test timed out after {timeout} seconds",
+                    "returncode": -1
+                })
+            except Exception as e:
+                add_log_entry(f"Error running test {test_path}: {str(e)}", level="ERROR")
+                test_results.append({
+                    "name": test_path,
+                    "status": "error",
+                    "message": str(e),
+                    "returncode": -1
+                })
         
-        return 1 if any_failed else 0
+        # Calculate result statistics
+        total_tests = len(test_results)
+        passed_tests = sum(1 for r in test_results if r["status"] == "success")
+        failed_tests = sum(1 for r in test_results if r["status"] == "failure")
+        error_tests = sum(1 for r in test_results if r["status"] == "error")
+        
+        result_data["tests"]["found"] = total_tests
+        result_data["tests"]["passed"] = passed_tests
+        result_data["tests"]["failed"] = failed_tests + error_tests
+        result_data["tests"]["skipped"] = 0
+        result_data["tests"]["details"] = test_results
+        
+        # Set overall status
+        if passed_tests == total_tests:
+            result_data["status"] = "success"
+            add_log_entry(f"All {passed_tests} tests passed")
+        elif passed_tests > 0:
+            result_data["status"] = "partial_success"
+            add_log_entry(f"{passed_tests} tests passed, {failed_tests + error_tests} tests failed")
+        else:
+            result_data["status"] = "failure"
+            add_log_entry(f"All {failed_tests + error_tests} tests failed")
+            any_failed = True
+        
+        # Generate summary
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        
+        # Update result data with summary information
+        result_data["execution"]["elapsed_time"] = elapsed_time
+        
+        add_log_entry(f"Process completed in {elapsed_time:.2f} seconds")
+        
+        # Write the final result to test_results.jsonl
+        with open(test_results_jsonl_path, "a") as f:
+            f.write(json.dumps(result_data) + "\n")
+        
+        add_log_entry(f"Results written to {test_results_jsonl_path}")
+    
+    return 1 if any_failed else 0
 
 
 def _process_test_repo_wrapper(args_and_repo):
@@ -2698,7 +2827,7 @@ def process_repo_list(args: argparse.Namespace) -> int:
         results = []
         
         # Use imap_unordered for better real-time progress updates
-        for result in pool.imap_unordered(_process_repo_wrapper_collect_tests if args.extract_tests else _process_repo_wrapper, arg_tuples):
+        for result in pool.imap_unordered(_process_test_repo_wrapper, arg_tuples):
             if args.extract_tests and isinstance(result, tuple):
                 exit_code, test_record = result
                 results.append(exit_code)
