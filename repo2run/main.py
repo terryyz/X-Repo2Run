@@ -2502,13 +2502,19 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
                 add_log_entry(f"Invalid test info, missing path: {test_info}", level="WARNING")
                 continue
             
+            # Skip test files that don't have tested_files
+            tested_files = test_info.get("tested_files", [])
+            if not tested_files:
+                add_log_entry(f"Skipping test file with no tested_files: {test_path}", level="INFO")
+                continue
+            
             # Build the full path to the test file
             full_test_path = repo_path / test_path
             if not full_test_path.exists():
                 add_log_entry(f"Test file not found at {full_test_path}. Skipping.", level="WARNING")
                 continue
             
-            add_log_entry(f"Running test file: {test_path}")
+            add_log_entry(f"Running test file: {test_path} (tests {len(tested_files)} project files)")
             
             # Use pytest to run the test
             cmd = [sys.executable, "-m", "pytest", str(test_path), "-v"]
