@@ -2281,6 +2281,32 @@ def process_test_repo(args: argparse.Namespace, repo_data: Dict, workspace_dir: 
                 })
                 
                 add_log_entry(f"Test {test_file.relative_to(repo_workspace)} completed with status: {status}")
+                
+                # Display detailed test output if verbose and test failed
+                if args.verbose and status == "failure":
+                    add_log_entry(f"Test failure details for {test_file.relative_to(repo_workspace)}:", level="ERROR")
+                    # Print a reasonable amount of the error message, capped to avoid overwhelming output
+                    error_lines = (result.stdout + "\n" + result.stderr).split("\n")
+                    # Focus on showing the actual error part rather than the full output
+                    error_excerpt = []
+                    # Find error sections in the output - look for Traceback or FAILED
+                    error_section_found = False
+                    for line in error_lines:
+                        if "Traceback" in line or "FAILED" in line or "Error" in line:
+                            error_section_found = True
+                        if error_section_found:
+                            error_excerpt.append(line)
+                    
+                    # If we found an error section, print it (up to 50 lines)
+                    if error_excerpt:
+                        for line in error_excerpt[:50]:
+                            logger.error(f"  {line}")
+                        if len(error_excerpt) > 50:
+                            logger.error(f"  ... (truncated, full error in test_results.jsonl)")
+                    # If no specific error section found, print the last part of the output
+                    else:
+                        for line in error_lines[-min(50, len(error_lines)):]:
+                            logger.error(f"  {line}")
             except subprocess.TimeoutExpired:
                 add_log_entry(f"Test {test_file.relative_to(repo_workspace)} timed out after {timeout} seconds", level="WARNING")
                 test_results.append({
@@ -2544,6 +2570,32 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
                 })
                 
                 add_log_entry(f"Test {test_path} completed with status: {status}")
+                
+                # Display detailed test output if verbose and test failed
+                if args.verbose and status == "failure":
+                    add_log_entry(f"Test failure details for {test_path}:", level="ERROR")
+                    # Print a reasonable amount of the error message, capped to avoid overwhelming output
+                    error_lines = (result.stdout + "\n" + result.stderr).split("\n")
+                    # Focus on showing the actual error part rather than the full output
+                    error_excerpt = []
+                    # Find error sections in the output - look for Traceback or FAILED
+                    error_section_found = False
+                    for line in error_lines:
+                        if "Traceback" in line or "FAILED" in line or "Error" in line:
+                            error_section_found = True
+                        if error_section_found:
+                            error_excerpt.append(line)
+                    
+                    # If we found an error section, print it (up to 50 lines)
+                    if error_excerpt:
+                        for line in error_excerpt[:50]:
+                            logger.error(f"  {line}")
+                        if len(error_excerpt) > 50:
+                            logger.error(f"  ... (truncated, full error in test_results.jsonl)")
+                    # If no specific error section found, print the last part of the output
+                    else:
+                        for line in error_lines[-min(50, len(error_lines)):]:
+                            logger.error(f"  {line}")
             except subprocess.TimeoutExpired:
                 add_log_entry(f"Test {test_path} timed out after {timeout} seconds", level="WARNING")
                 test_results.append({
