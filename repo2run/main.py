@@ -2746,11 +2746,8 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
                     
                     # Always print the actual command output for debugging
                     logger.error("Test command output:")
-                    for line in error_lines[:min(20, len(error_lines))]:
+                    for line in error_lines:
                         logger.error(f"  {line}")
-                    
-                    if len(error_lines) > 20:
-                        logger.error("  ... (truncated, showing error details below)")
                     
                     # Focus on showing the actual error part rather than the full output
                     error_excerpt = []
