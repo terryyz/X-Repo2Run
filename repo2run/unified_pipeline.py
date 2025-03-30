@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import List, Dict, Set, Tuple, Optional, Any
 import tempfile
 import re
+import traceback
 import concurrent.futures
 from tqdm import tqdm
 
@@ -729,15 +730,17 @@ def create_unified_environment(all_dependencies, output_dir, args):
     return venv_path, install_status
 
 
-def run_tests_for_repo(repo_info, output_dir, unified_venv, args):
+def run_tests_for_repo(repo_info, output_dir, unified_venv, args, test_file_list=None, test_file_metadata=None):
     """
     Run tests for a single repository using the unified virtual environment.
     
     Args:
         repo_info: Repository information (tuple or Path)
         output_dir: Output directory
-        unified_venv: Path to the unified virtual environment
+        unified_venv: Path to the unified virtual environment (can be None to use current environment)
         args: Command line arguments
+        test_file_list: Optional list of test file paths
+        test_file_metadata: Optional dictionary to store additional metadata for test files
     
     Returns:
         dict: Test results
@@ -761,20 +764,12 @@ def run_tests_for_repo(repo_info, output_dir, unified_venv, args):
             "failed": 0,
             "skipped": 0,
             "details": []
-        },
-        "logs": []
+        }
     }
     
     def add_log_entry(message, level="INFO", **kwargs):
-        """Add a log entry to both the logger and result data."""
+        """Add a log entry to the logger only."""
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        log_entry = {
-            "timestamp": timestamp,
-            "level": level,
-            "message": message,
-            **kwargs
-        }
-        result_data["logs"].append(log_entry)
         
         if level == "INFO":
             logger.info(message)
@@ -784,54 +779,168 @@ def run_tests_for_repo(repo_info, output_dir, unified_venv, args):
             logger.error(message)
     
     try:
-        # Clone or set up local repository
+        # Set up repository information
+        working_dir = None
+        
         if isinstance(repo_info, tuple):
+            # GitHub repository
             full_name, sha = repo_info
-            working_dir = repo_manager.clone_repository(full_name, sha)
-            repo_id = f"{full_name}@{sha}"
-        else:
-            local_path = Path(repo_info) if not isinstance(repo_info, Path) else repo_info
-            # Use the repository directly without copying
-            working_dir = repo_manager.use_local_repository(local_path)
-            # Use absolute path without resolving symlinks for better performance
-            repo_id = str(local_path.absolute())
-        
-        result_data["repository"] = repo_id
-        add_log_entry(f"Processing repository: {repo_id}")
-        
-        # Install the package in development mode
-        try:
-            if sys.platform == 'win32':
-                pip_path = unified_venv / 'Scripts' / 'pip.exe'
+            repo_name = full_name
+            result_data["repository"] = f"{full_name}@{sha}"
+            
+            # Check if the repository has already been cloned
+            if hasattr(args, 'workspace_dir') and args.workspace_dir:
+                workspace_dir = Path(args.workspace_dir)
+                repo_dir = workspace_dir / full_name.replace("/", "_") / sha
+                if repo_dir.exists():
+                    add_log_entry(f"Using existing repository at {repo_dir}")
+                    working_dir = repo_dir
+                else:
+                    # Clone the repository to the workspace directory
+                    add_log_entry(f"Cloning repository {full_name}@{sha} to {repo_dir}")
+                    try:
+                        repo_manager.clone_repository(full_name, sha, repo_dir)
+                        working_dir = repo_dir
+                    except Exception as e:
+                        add_log_entry(f"Failed to clone repository: {str(e)}", level="ERROR")
+                        result_data["status"] = "error"
+                        result_data["error"] = f"Failed to clone repository: {str(e)}"
+                        result_data["execution"]["elapsed_time"] = time.time() - result_data["execution"]["start_time"]
+                        return result_data
             else:
-                pip_path = unified_venv / 'bin' / 'pip'
+                # Clone to a temporary directory
+                temp_dir = tempfile.mkdtemp(prefix="repo2run_")
+                add_log_entry(f"Cloning repository {full_name}@{sha} to temporary directory {temp_dir}")
+                try:
+                    repo_manager.clone_repository(full_name, sha, temp_dir)
+                    working_dir = Path(temp_dir)
+                except Exception as e:
+                    add_log_entry(f"Failed to clone repository: {str(e)}", level="ERROR")
+                    result_data["status"] = "error"
+                    result_data["error"] = f"Failed to clone repository: {str(e)}"
+                    result_data["execution"]["elapsed_time"] = time.time() - result_data["execution"]["start_time"]
+                    # Clean up temporary directory
+                    try:
+                        shutil.rmtree(temp_dir)
+                    except Exception:
+                        pass
+                    return result_data
+        else:
+            # Local directory
+            repo_path = Path(repo_info)
+            repo_name = repo_path.name
+            result_data["repository"] = str(repo_path)
             
-            add_log_entry("Installing Cython")
-            result = subprocess.run(
-                [str(pip_path), 'install', 'Cython'],
-                check=True,
-                capture_output=True,
-                text=True
-            )
+            # Use the local repository directly
+            working_dir = repo_path
+        
+        add_log_entry(f"Working directory set to {working_dir}")
+        
+        # Process test files if provided
+        test_files = None
+        test_metadata = {}  # Will store metadata for each test file
+        
+        if test_file_list:
+            # Convert test file paths to Path objects relative to working_dir
+            test_files = []
+            skipped_files = []
             
-            add_log_entry("Installing package in development mode (pip install -e .)")
-            result = subprocess.run(
-                [str(pip_path), 'install', '-e', '.'],
-                cwd=working_dir,
-                check=True,
-                capture_output=True,
-                text=True
-            )
-            add_log_entry(f"Successfully installed package in development mode")
-        except Exception as e:
-            add_log_entry(f"Failed to install package in development mode: {str(e)}", level="WARNING")
+            # Check if we should require tested_files
+            require_tested_files = hasattr(args, 'require_tested_files') and args.require_tested_files
+            
+            for test_file_path in test_file_list:
+                try:
+                    # Check if this test file has tested_files metadata
+                    if require_tested_files and test_file_metadata and test_file_path in test_file_metadata:
+                        metadata = test_file_metadata[test_file_path]
+                        tested_files = metadata.get("tested_files", [])
+                        
+                        # Skip test files without tested_files information
+                        if not tested_files:
+                            add_log_entry(f"Skipping test file {test_file_path} because it doesn't have tested_files information", level="WARNING")
+                            skipped_files.append(test_file_path)
+                            continue
+                    
+                    # Try multiple ways to locate the test file
+                    # 1. Direct path from working directory
+                    file_path = working_dir / test_file_path
+                    
+                    # 2. If not found, try with just the filename
+                    if not file_path.exists():
+                        file_path = working_dir / Path(test_file_path).name
+                    
+                    # 3. Try a glob pattern based on the filename
+                    if not file_path.exists():
+                        file_name = Path(test_file_path).name
+                        glob_pattern = f"**/{file_name}"
+                        glob_results = list(working_dir.glob(glob_pattern))
+                        if glob_results:
+                            file_path = glob_results[0]  # Use the first match
+                    
+                    # Add the file if it exists
+                    if file_path.exists():
+                        test_files.append(file_path)
+                        relative_path = file_path.relative_to(working_dir)
+                        add_log_entry(f"Found test file: {relative_path}")
+                        
+                        # Capture metadata for this test file if available
+                        if test_file_metadata and test_file_path in test_file_metadata:
+                            # Store with both absolute and relative paths for easier lookup
+                            test_metadata[str(file_path)] = test_file_metadata[test_file_path]
+                            test_metadata[str(relative_path)] = test_file_metadata[test_file_path]
+                            
+                            # Log tested files
+                            tested_files = test_file_metadata[test_file_path].get("tested_files", [])
+                            
+                            # Remove duplicates while preserving order
+                            if tested_files:
+                                seen = set()
+                                unique_tested_files = []
+                                for item in tested_files:
+                                    if item not in seen:
+                                        seen.add(item)
+                                        unique_tested_files.append(item)
+                                
+                                # Log if duplicates were found and removed
+                                if len(unique_tested_files) < len(tested_files):
+                                    add_log_entry(f"Removed {len(tested_files) - len(unique_tested_files)} duplicate entries from tested_files for {relative_path}")
+                                
+                                # Update the metadata with deduplicated tested_files
+                                test_file_metadata[test_file_path]["tested_files"] = unique_tested_files
+                                test_metadata[str(file_path)]["tested_files"] = unique_tested_files
+                                test_metadata[str(relative_path)]["tested_files"] = unique_tested_files
+                                tested_files = unique_tested_files
+                            
+                            if tested_files:
+                                add_log_entry(f"Test file {relative_path} has {len(tested_files)} tested files")
+                    else:
+                        add_log_entry(f"Test file not found: {test_file_path}", level="WARNING")
+                except Exception as e:
+                    add_log_entry(f"Error processing test file path {test_file_path}: {str(e)}", level="WARNING")
+            
+            if test_files:
+                add_log_entry(f"Using {len(test_files)} test files from test.jsonl")
+            else:
+                add_log_entry("None of the provided test files were found, will use auto-discovery instead", level="WARNING")
+                test_files = None
+            
+            # Add information about skipped files to result_data
+            if skipped_files:
+                add_log_entry(f"Skipped {len(skipped_files)} test files due to missing tested_files information", level="WARNING")
+                result_data["skipped_files"] = {
+                    "count": len(skipped_files),
+                    "files": skipped_files,
+                    "reason": "missing_tested_files"
+                }
         
         # Run tests
         test_runner = TestRunner(working_dir, venv_path=unified_venv, use_uv=args.use_uv, 
-                               logger=logger, timeout=args.timeout)
+                               logger=logger, timeout=args.timeout, test_files=test_files, 
+                               test_metadata=test_metadata)
         
-        add_log_entry("Looking for tests in the repository")
-        test_files = test_runner.find_tests()
+        if not test_files:
+            add_log_entry("Looking for tests in the repository")
+            test_files = test_runner.get_test_files()
         
         if not test_files:
             add_log_entry("No tests found. Marking repository as 'skip'")
@@ -839,6 +948,40 @@ def run_tests_for_repo(repo_info, output_dir, unified_venv, args):
             return result_data
         
         add_log_entry(f"Found {len(test_files)} test files")
+        
+        # When specific test files were provided, ensure that ONLY those files are used
+        if test_file_list is not None:
+            add_log_entry("Enforcing strict test file selection - will only use input test files")
+            # Convert test files to strings for comparison
+            test_file_paths = [str(file_path) for file_path in test_files]
+            
+            # Extract file names (without paths) for flexible matching
+            test_file_names = [Path(file_path).name for file_path in test_file_paths]
+            input_file_names = [Path(file_path).name for file_path in test_file_list]
+            
+            # Log what's being included
+            add_log_entry(f"Input test file names: {input_file_names}")
+            add_log_entry(f"Found test file names: {test_file_names}")
+            
+            # Filter test files to include only those that match the input files
+            filtered_test_files = []
+            for test_file in test_files:
+                test_file_str = str(test_file)
+                test_file_name = Path(test_file_str).name
+                
+                # Include file if its full path matches an input file OR if just the filename matches
+                if any(input_file in test_file_str for input_file in test_file_list) or test_file_name in input_file_names:
+                    filtered_test_files.append(test_file)
+                    add_log_entry(f"Including test file: {test_file_str}")
+                else:
+                    add_log_entry(f"Excluding test file: {test_file_str} (not in input list)")
+            
+            # Replace test_files with the filtered list
+            test_files = filtered_test_files
+            add_log_entry(f"Using {len(test_files)} test files after filtering")
+            
+            # Update the test runner with the filtered list
+            test_runner.test_files = test_files
         
         # Run tests
         test_results = test_runner.run_tests()
@@ -864,113 +1007,182 @@ def run_tests_for_repo(repo_info, output_dir, unified_venv, args):
                 has_failures = failure_count > 0
                 break
         
-        # If no summary line found, fall back to counting individual results
-        if total_test_cases == 0:
-            for test_detail in test_results.get("test_results", []):
-                message = test_detail.get("message", "")
-                status = test_detail.get("status", "")
-                
-                if status == "failure" or "ERROR" in message or "FAILED" in message:
-                    has_failures = True
-                    # Count individual failures
-                    failure_matches = len(re.findall(r'(ERROR|FAILED)', message))
-                    failure_count += failure_matches if failure_matches > 0 else 1
-                elif status == "success":
-                    # Count individual successes (PASSED)
-                    success_matches = len(re.findall(r'PASSED', message))
-                    success_count += success_matches if success_matches > 0 else 1
-                elif status == "skipped" or "SKIPPED" in message:
-                    skip_matches = len(re.findall(r'SKIPPED', message))
-                    skip_count += skip_matches if skip_matches > 0 else 1
-            
-            total_test_cases = failure_count + success_count + skip_count
+        # If we have individual tests, use those for more accurate counts
+        if "individual_tests" in test_results and test_results["individual_tests"]:
+            individual_tests = test_results["individual_tests"]
+            success_count = sum(1 for t in individual_tests if t.get("status") == "passed")
+            failure_count = sum(1 for t in individual_tests if t.get("status") in ["failed", "failure", "error"])
+            skip_count = sum(1 for t in individual_tests if t.get("status") == "skipped")
+            total_test_cases = len(individual_tests)
+            has_failures = failure_count > 0
+            add_log_entry(f"Using counts from {total_test_cases} individual tests: {success_count} passed, {failure_count} failed, {skip_count} skipped")
         
-        # Store test results
-        result_data["tests"]["found"] = total_test_cases
-        result_data["tests"]["passed"] = success_count
-        result_data["tests"]["failed"] = failure_count
-        result_data["tests"]["skipped"] = skip_count
+        # Update result data with test results
+        result_data["tests"]["found"] = test_results.get("tests_found", 0)
+        result_data["tests"]["passed"] = test_results.get("tests_passed", 0)
+        result_data["tests"]["failed"] = test_results.get("tests_failed", 0)
+        result_data["tests"]["skipped"] = test_results.get("tests_skipped", 0)
         result_data["tests"]["details"] = test_results.get("test_results", [])
         
-        # Determine status
-        if total_test_cases == 0:
-            result_data["status"] = "skip"
-            add_log_entry("No test cases found. Marking repository as 'skip'")
-        elif failure_count > 0:
-            if success_count > 0:
-                result_data["status"] = "partial_success"
-                add_log_entry(f"Some tests passed ({success_count}), some failed ({failure_count}). Marking as 'partial_success'")
-            else:
-                result_data["status"] = "failure"
-                add_log_entry(f"All tests failed ({failure_count}). Marking as 'failure'")
-        else:
-            result_data["status"] = "success"
-            add_log_entry(f"All tests passed ({success_count}). Marking as 'success'")
+        # Add individual test results if available
+        if "individual_tests" in test_results:
+            result_data["individual_tests"] = test_results["individual_tests"]
+            add_log_entry(f"Collected {len(test_results['individual_tests'])} individual test results")
+            
+            # Organize individual tests by file path and add test name lists to test files
+            tests_by_file = {}
+            
+            # Group tests by file
+            for test in test_results["individual_tests"]:
+                file_path = test.get("file_path", "")
+                test_name = test.get("name", "")
+                status = test.get("status", "")
+                classname = test.get("classname", "")
+                message = test.get("message", "")
+                
+                if not file_path:
+                    continue
+                
+                # Initialize the file entry if needed
+                if file_path not in tests_by_file:
+                    tests_by_file[file_path] = []
+                
+                # Add test object to the list
+                tests_by_file[file_path].append({
+                    "name": test_name,
+                    "classname": classname,
+                    "status": status,
+                    "message": message
+                })
+            
+            # Update test file data in the FINAL result_data structure
+            if "test_files" in test_results:
+                # Initialize test_files in result_data if not present
+                if "test_files" not in result_data:
+                    result_data["test_files"] = [
+                        {"path": test_file["path"], "status": test_file["status"], "tests": []} 
+                        for test_file in test_results["test_files"]
+                    ]
+                
+                # Make sure we have test_files in result_data
+                for i, test_file in enumerate(test_results["test_files"]):
+                    file_path = test_file.get("path", "")
+                    
+                    # Make sure all test files from test_results are in result_data
+                    if i >= len(result_data.get("test_files", [])):
+                        result_data.setdefault("test_files", []).append({
+                            "path": file_path,
+                            "status": test_file.get("status", "unknown"),
+                            "tests": []
+                        })
+                    
+                    # Add tests to result_data test files
+                    if file_path in tests_by_file:
+                        # Add tests array directly to the result_data structure
+                        result_data["test_files"][i]["tests"] = tests_by_file[file_path]
+                        
+                        # Add summary field with test counts 
+                        if "summary" not in result_data["test_files"][i]:
+                            result_data["test_files"][i]["summary"] = {}
+                        
+                        # Ensure the summary counts match the actual tests
+                        tests = result_data["test_files"][i]["tests"]
+                        result_data["test_files"][i]["summary"] = {
+                            "passed_tests": sum(1 for t in tests if t.get("status") == "passed"),
+                            "failed_tests": sum(1 for t in tests if t.get("status") in ["failure", "error"]),
+                            "skipped_tests": sum(1 for t in tests if t.get("status") == "skipped")
+                        }
+                        
+                        add_log_entry(f"Added {len(tests)} tests to result_data for file {file_path}")
+            
+            # Make sure all test files have the required fields even if they don't have individual tests
+            if "test_files" in result_data:
+                for test_file in result_data["test_files"]:
+                    # Make sure the test_file has the required field
+                    if "tests" not in test_file:
+                        test_file["tests"] = []
+                    
+                    # Make sure summary is present and correct
+                    if "summary" not in test_file:
+                        test_file["summary"] = {
+                            "passed_tests": sum(1 for t in test_file.get("tests", []) if t.get("status") == "passed"),
+                            "failed_tests": sum(1 for t in test_file.get("tests", []) if t.get("status") in ["failure", "error"]),
+                            "skipped_tests": sum(1 for t in test_file.get("tests", []) if t.get("status") == "skipped")
+                        }
         
-        # Update execution time
-        end_time = time.time()
-        result_data["execution"]["elapsed_time"] = end_time - result_data["execution"]["start_time"]
+        # Set status based on test results
+        result_data["status"] = test_results.get("status", "unknown")
+        
+        # Set execution time
+        result_data["execution"]["elapsed_time"] = time.time() - result_data["execution"]["start_time"]
+        
+        add_log_entry(f"Completed tests with status: {result_data['status']}")
         
         return result_data
-    
     except Exception as e:
-        add_log_entry(f"Error running tests: {str(e)}", level="ERROR")
+        # Handle unhandled exceptions
+        add_log_entry(f"Unhandled exception during test execution: {str(e)}", level="ERROR")
         result_data["status"] = "error"
-        result_data["error"] = str(e)
+        result_data["error"] = f"Unhandled exception: {str(e)}"
+        result_data["execution"]["elapsed_time"] = time.time() - result_data["execution"]["start_time"]
         
-        # Update execution time
-        end_time = time.time()
-        result_data["execution"]["elapsed_time"] = end_time - result_data["execution"]["start_time"]
+        # Add traceback
+        traceback_str = traceback.format_exc()
+        add_log_entry(f"Traceback: {traceback_str}", level="ERROR")
         
         return result_data
+    finally:
+        # Check if we need to clean up a temporary directory
+        if isinstance(repo_info, tuple) and not hasattr(args, 'workspace_dir'):
+            if 'temp_dir' in locals() and temp_dir and Path(temp_dir).exists():
+                add_log_entry(f"Cleaning up temporary directory {temp_dir}")
+                try:
+                    shutil.rmtree(temp_dir)
+                except Exception as e:
+                    add_log_entry(f"Failed to clean up temporary directory: {str(e)}", level="WARNING")
 
 
-def run_tests_parallel(repositories, output_dir, unified_venv, args):
+def run_tests_parallel(repositories, output_dir, unified_venv, args, repo_test_info=None):
     """
     Run tests for all repositories in parallel.
     
     Args:
         repositories: List of repositories
         output_dir: Output directory
-        unified_venv: Path to the unified virtual environment
+        unified_venv: Path to the unified virtual environment (can be None to use current environment)
         args: Command line arguments
+        repo_test_info: Optional dictionary mapping repository paths to test file information
     
     Returns:
         dict: Test results by repository
     """
     logger = logging.getLogger(__name__)
-    logger.info(f"🧪 Running tests for {len(repositories)} repositories using unified environment")
+    logger.info(f"🧪 Running tests for {len(repositories)} repositories")
     
     # Print environment info
     logger.info(f"📂 Environment details:")
-    logger.info(f"  - Virtual environment: {unified_venv}")
-    
-    # Try to get Python version in the virtual environment
-    try:
-        if sys.platform == 'win32':
-            python_path = unified_venv / 'Scripts' / 'python.exe'
-        else:
-            python_path = unified_venv / 'bin' / 'python'
+    if unified_venv:
+        logger.info(f"  - Using virtual environment at: {unified_venv}")
         
-        result = subprocess.run(
-            [str(python_path), '--version'],
-            check=True,
-            capture_output=True,
-            text=True
-        )
-        logger.info(f"  - Python version: {result.stdout.strip()}")
-    except Exception:
-        logger.info(f"  - Python version: Unknown")
-    
-    # Results file
-    records_path = output_dir / "records.jsonl"
-    logger.info(f"📄 Test results will be saved to {records_path}")
-    
-    # Clear existing records.jsonl if it exists
-    if records_path.exists():
-        with open(records_path, 'w') as f:
-            # Empty the file
-            pass
+        # Try to get Python version in the virtual environment
+        try:
+            if sys.platform == 'win32':
+                python_path = unified_venv / 'Scripts' / 'python.exe'
+            else:
+                python_path = unified_venv / 'bin' / 'python'
+            
+            result = subprocess.run(
+                [str(python_path), '--version'],
+                check=True,
+                capture_output=True,
+                text=True
+            )
+            logger.info(f"  - Python version in venv: {result.stdout.strip()}")
+        except Exception:
+            logger.info(f"  - Python version in venv: Unknown")
+    else:
+        logger.info(f"  - Using current Python environment: {sys.executable}")
+        logger.info(f"  - Python version: {sys.version.split()[0]}")
     
     # Increase default max_workers for better parallelism
     max_workers = args.max_workers
@@ -988,16 +1200,74 @@ def run_tests_parallel(repositories, output_dir, unified_venv, args):
     # Use a thread pool for the test running
     with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks
-        future_to_repo = {
-            executor.submit(run_tests_for_repo, repo, output_dir, unified_venv, args): repo
-            for repo in repositories
-        }
+        future_to_repo = {}
+        for repo in repositories:
+            # Get test files for this repo if available
+            test_file_list = None
+            if repo_test_info:
+                # Get the correct key format based on repo type
+                if isinstance(repo, tuple):
+                    # For GitHub repos (tuple format), we need to match the format from test.jsonl
+                    full_name, sha = repo
+                    repo_key = f"{full_name}@{sha}"
+                else:
+                    # For local directories (Path format), convert to string
+                    repo_key = str(repo)
+                
+                if repo_key in repo_test_info:
+                    # Extract test file paths from the test info
+                    test_files_info = repo_test_info[repo_key]
+                    if test_files_info:
+                        # Extract paths and other info from test info
+                        test_file_list = []
+                        test_file_metadata = {}  # Store additional metadata for each test file path
+                        
+                        for test_info in test_files_info:
+                            if "path" in test_info:
+                                test_path = test_info["path"]
+                                test_file_list.append(test_path)
+                                
+                                # Get tested_files information for this test file
+                                tested_files = test_info.get("tested_files", [])
+                                
+                                # Store the metadata
+                                test_file_metadata[test_path] = {
+                                    "tested_files": tested_files
+                                }
+                        
+                        logger.info(f"Using {len(test_file_list)} test files from test.jsonl for repository {repo_key}")
+                        
+                        # Pass both the test file list and the metadata
+                        future = executor.submit(
+                            run_tests_for_repo, 
+                            repo, 
+                            output_dir, 
+                            unified_venv, 
+                            args, 
+                            test_file_list,
+                            test_file_metadata
+                        )
+                        future_to_repo[future] = repo
+                        continue
+            
+            # If we didn't start a task above, submit one without test files
+            future = executor.submit(run_tests_for_repo, repo, output_dir, unified_venv, args, None, None)
+            future_to_repo[future] = repo
         
         # Process results as they complete with a detailed progress bar
         total_tests = 0
         passed_tests = 0
         failed_tests = 0
         skipped_tests = 0
+        
+        # Track total individual tests
+        total_individual_tests = 0
+        passed_individual_tests = 0
+        failed_individual_tests = 0
+        skipped_individual_tests = 0
+        
+        # Track skipped files
+        total_skipped_files = 0
         
         # Create a progress bar with more information
         with tqdm(total=len(repositories), desc="Running tests", 
@@ -1029,10 +1299,18 @@ def run_tests_parallel(repositories, output_dir, unified_venv, args):
                     status = result.get("status", "unknown")
                     pbar.set_postfix_str(f"{repo_name}: {status}")
                     
-                    # Append to records.jsonl
-                    with open(records_path, 'a') as f:
-                        f.write(json.dumps(result) + '\n')
+                    # Count individual tests if available
+                    if "individual_tests" in result:
+                        individual_tests = result["individual_tests"]
+                        total_individual_tests += len(individual_tests)
+                        passed_individual_tests += sum(1 for t in individual_tests if t.get("status") == "passed")
+                        failed_individual_tests += sum(1 for t in individual_tests if t.get("status") in ["failed", "failure", "error"])
+                        skipped_individual_tests += sum(1 for t in individual_tests if t.get("status") == "skipped")
                     
+                    # Track skipped files
+                    if "skipped_files" in result:
+                        total_skipped_files += result["skipped_files"].get("count", 0)
+                
                 except Exception as e:
                     # Handle error message formatting for both tuple and Path objects
                     if isinstance(repo, tuple):
@@ -1066,6 +1344,10 @@ def run_tests_parallel(repositories, output_dir, unified_venv, args):
     logger.info(f"  ⏩ Skip (no tests): {status_counts['skip']} repositories")
     logger.info(f"  🔥 Error: {status_counts['error']} repositories")
     
+    # Print skipped files summary if any
+    if total_skipped_files > 0:
+        logger.info(f"  ⏭️  Skipped files: {total_skipped_files} test files skipped due to missing tested_files information")
+    
     # Calculate percentages safely
     passed_percent = (passed_tests / total_tests * 100) if total_tests > 0 else 0
     failed_percent = (failed_tests / total_tests * 100) if total_tests > 0 else 0
@@ -1076,6 +1358,18 @@ def run_tests_parallel(repositories, output_dir, unified_venv, args):
     logger.info(f"  - Passed: {passed_tests} ({passed_percent:.1f}%)")
     logger.info(f"  - Failed: {failed_tests} ({failed_percent:.1f}%)")
     logger.info(f"  - Skipped: {skipped_tests} ({skipped_percent:.1f}%)")
+    
+    # Log individual test information if available
+    if total_individual_tests > 0:
+        passed_individual_percent = (passed_individual_tests / total_individual_tests * 100) if total_individual_tests > 0 else 0
+        failed_individual_percent = (failed_individual_tests / total_individual_tests * 100) if total_individual_tests > 0 else 0
+        skipped_individual_percent = (skipped_individual_tests / total_individual_tests * 100) if total_individual_tests > 0 else 0
+        
+        logger.info(f"📊 Individual test case summary:")
+        logger.info(f"  - Total individual tests: {total_individual_tests}")
+        logger.info(f"  - Passed: {passed_individual_tests} ({passed_individual_percent:.1f}%)")
+        logger.info(f"  - Failed: {failed_individual_tests} ({failed_individual_percent:.1f}%)")
+        logger.info(f"  - Skipped: {skipped_individual_tests} ({skipped_individual_percent:.1f}%)")
     
     return all_results
 

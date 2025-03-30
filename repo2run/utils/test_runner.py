@@ -12,6 +12,12 @@ from pathlib import Path
 import sys
 import threading
 from contextlib import contextmanager
+import tempfile
+import xml.etree.ElementTree as ET
+import pytest
+import json
+from datetime import datetime
+from io import StringIO
 
 
 @contextmanager
@@ -35,33 +41,104 @@ class TestRunner:
     Finds and runs tests in a repository.
     """
     
-    def __init__(self, repo_path, venv_path=None, use_uv=True, logger=None, timeout=None):
+    def __init__(self, repo_path, venv_path=None, use_uv=True, logger=None, timeout=None, test_files=None, test_metadata=None):
         """
         Initialize the test runner.
         
         Args:
             repo_path (Path): Path to the repository.
-            venv_path (Path, optional): Path to the virtual environment. If None, a default path is used.
+            venv_path (Path, optional): Path to the virtual environment. If None, system Python will be used.
             use_uv (bool): Whether to use UV for package management. If False, use pip/venv.
             logger (logging.Logger, optional): Logger instance. If None, a new logger is created.
             timeout (int, optional): Timeout in seconds for test processes. If None, no timeout is applied.
+            test_files (list, optional): List of test file paths. If provided, these will be used instead of finding tests.
+            test_metadata (dict, optional): Dictionary mapping test file paths to metadata like tested_files.
         """
         self.repo_path = Path(repo_path)
         self.use_uv = use_uv
         self.timeout = timeout
+        self.test_files = test_files
+        self.test_metadata = test_metadata or {}
         
-        if venv_path is None:
-            self.venv_path = self.repo_path / '.venv'
-        else:
-            self.venv_path = Path(venv_path)
-        
+        # Set up logger first so we can use it for logging
         self.logger = logger or logging.getLogger(__name__)
+        
+        if venv_path == None:
+            # Use system Python if venv_path is explicitly set to None
+            self.venv_path = None
+            self.logger.info("Using system Python (no virtual environment)")
+        elif isinstance(venv_path, (str, Path)):
+            # Use specified virtual environment path
+            self.venv_path = Path(venv_path)
+            self.logger.info(f"Using virtual environment at {self.venv_path}")
+        else:
+            # Default to a '.venv' directory in the repository
+            self.venv_path = self.repo_path / '.venv'
+            self.logger.info(f"Using default virtual environment at {self.venv_path}")
         
         # Log the timeout setting for debugging
         if self.timeout:
             self.logger.info(f"TestRunner initialized with timeout: {self.timeout} seconds")
         else:
             self.logger.info("TestRunner initialized with no timeout setting")
+    
+    def get_test_files(self):
+        """
+        Get a list of test files to run.
+        
+        Returns:
+            list: List of test files (Path objects)
+        """
+        # If test files were explicitly provided during initialization, use those directly
+        if self.test_files is not None and len(self.test_files) > 0:
+            self.logger.info(f"Using {len(self.test_files)} explicitly provided test files")
+            
+            # Convert string paths to Path objects if needed
+            resolved_test_files = []
+            for test_file in self.test_files:
+                if isinstance(test_file, str):
+                    # Handle various ways the path could be specified
+                    test_path = Path(test_file)
+                    if not test_path.is_absolute():
+                        # Try as a path relative to the repo
+                        repo_relative_path = self.repo_path / test_path
+                        if repo_relative_path.exists():
+                            resolved_test_files.append(repo_relative_path)
+                            self.logger.info(f"Found test file as repo-relative path: {repo_relative_path}")
+                            continue
+                        
+                        # Try with glob to find the file by name
+                        file_name = test_path.name
+                        glob_matches = list(self.repo_path.glob(f"**/{file_name}"))
+                        if glob_matches:
+                            # Use the first match
+                            resolved_test_files.append(glob_matches[0])
+                            self.logger.info(f"Found test file by name: {glob_matches[0]}")
+                            continue
+                    elif test_path.exists():
+                        # Use the absolute path directly
+                        resolved_test_files.append(test_path)
+                        self.logger.info(f"Using absolute test file path: {test_path}")
+                        continue
+                    
+                    self.logger.warning(f"Could not resolve test file path: {test_file}")
+                else:
+                    # It's already a Path object
+                    resolved_test_files.append(test_file)
+                    self.logger.info(f"Using provided test file path: {test_file}")
+            
+            # Return only the valid, resolved test files
+            if resolved_test_files:
+                return resolved_test_files
+            else:
+                self.logger.warning("None of the explicitly provided test files could be resolved")
+                # When specified test files are provided but none could be resolved,
+                # return an empty list instead of falling back to discovery
+                return []
+        
+        # If no test files were explicitly provided, use auto-discovery
+        self.logger.info("No test files explicitly provided, using auto-discovery")
+        return self.find_tests()
     
     def find_tests(self):
         """
@@ -288,7 +365,29 @@ class TestRunner:
         # Find the best working directory
         working_dir = self._find_best_working_dir()
         
-        if self.use_uv:
+        # If no venv, check system-wide pytest
+        if self.venv_path is None:
+            try:
+                # Check if pytest is installed using command directly
+                result = subprocess.run(
+                    ['pytest', '--version'],
+                    cwd=working_dir,
+                    check=False,
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode == 0:
+                    self.logger.info(f"pytest is installed system-wide: {result.stdout.strip()}")
+                    return True
+                else:
+                    self.logger.warning("pytest is not installed system-wide")
+                    return False
+            except Exception as e:
+                self.logger.warning(f"Failed to check if pytest is installed system-wide: {str(e)}")
+                return False
+                
+        elif self.use_uv:
             try:
                 # Check if pytest is installed using uv list
                 result = subprocess.run(
@@ -350,7 +449,30 @@ class TestRunner:
         # Find the best working directory
         working_dir = self._find_best_working_dir()
         
-        if self.use_uv:
+        # If no venv, install pytest system-wide
+        if self.venv_path is None:
+            self.logger.info("Installing pytest system-wide")
+            try:
+                # Install pytest using pip system-wide
+                result = subprocess.run(
+                    ['pip', 'install', 'pytest', '--user'],
+                    cwd=working_dir,
+                    check=False,
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode == 0:
+                    self.logger.info("pytest installed successfully system-wide")
+                    return True
+                else:
+                    self.logger.error(f"Failed to install pytest system-wide: {result.stderr}")
+                    return False
+            except Exception as e:
+                self.logger.error(f"Failed to install pytest system-wide: {str(e)}")
+                return False
+                
+        elif self.use_uv:
             self.logger.info("Installing pytest using uv")
             try:
                 self.logger.info(f"Installing pytest for Python")
@@ -468,6 +590,16 @@ class TestRunner:
                 try:
                     relative_path = test_file.relative_to(self.repo_path)
                     relative_test_files.append(str(relative_path))
+                    
+                    # Log tested files metadata if available
+                    if self.test_metadata:
+                        # Try multiple forms of the path
+                        for path_form in [str(test_file), str(relative_path), test_file.name]:
+                            if path_form in self.test_metadata:
+                                tested_files = self.test_metadata[path_form].get("tested_files", [])
+                                if tested_files:
+                                    self.logger.info(f"Test file {relative_path} has {len(tested_files)} tested files")
+                                break
                 except ValueError:
                     # If we can't get a relative path, use the absolute path
                     self.logger.warning(f"Couldn't get relative path for {test_file}, using absolute path")
@@ -577,11 +709,31 @@ class TestRunner:
         
         self.logger.info(f"Running command: {' '.join(command)}")
         
-        # Get the path to the Python executable in the virtual environment
+        # Get the path to the Python executable in the virtual environment or system Python
         python_path = self._get_python_path()
         
-        if command[0] == "pytest":
-            # If the command starts with pytest, use python -m pytest instead
+        # If no venv_path, and command is pytest, just use pytest directly
+        if self.venv_path is None and command[0] == "pytest":
+            try:
+                # Try to find pytest in PATH
+                result = subprocess.run(
+                    ['which', 'pytest'] if sys.platform != 'win32' else ['where', 'pytest'],
+                    check=False,
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode == 0 and result.stdout.strip():
+                    # Use pytest directly if found in PATH
+                    command = [result.stdout.strip()] + command[1:]
+                else:
+                    # Fall back to python -m pytest
+                    command = [str(python_path), "-m", "pytest"] + command[1:]
+            except Exception:
+                # If any error occurs, fall back to python -m pytest
+                command = [str(python_path), "-m", "pytest"] + command[1:]
+        elif command[0] == "pytest":
+            # If the command starts with pytest (with venv), use python -m pytest instead
             command = [str(python_path), "-m", "pytest"] + command[1:]
         else:
             # Otherwise, prepend the Python path
@@ -631,6 +783,13 @@ class TestRunner:
         Returns:
             Path: Path to the Python executable.
         """
+        # If no venv, use system Python
+        if self.venv_path is None:
+            self.logger.info("Using system Python")
+            python_path = Path(sys.executable)
+            return python_path
+        
+        # Otherwise use venv Python
         if sys.platform == 'win32':
             python_path = self.venv_path / 'Scripts' / 'python.exe'
         else:
@@ -650,8 +809,31 @@ class TestRunner:
         Get the path to the pytest executable in the virtual environment.
         
         Returns:
-            Path: Path to the pytest executable.
+            Path: Path to the pytest executable, or None if not found.
         """
+        # If no venv, try to find system pytest 
+        if self.venv_path is None:
+            try:
+                # Check if pytest is available in PATH
+                result = subprocess.run(
+                    ['which', 'pytest'] if sys.platform != 'win32' else ['where', 'pytest'],
+                    check=False,
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode == 0 and result.stdout.strip():
+                    pytest_path = Path(result.stdout.strip())
+                    self.logger.info(f"Found system pytest at {pytest_path}")
+                    return pytest_path
+                else:
+                    self.logger.warning("System pytest not found, falling back to using python -m pytest")
+                    return None
+            except Exception as e:
+                self.logger.warning(f"Error finding system pytest: {str(e)}")
+                return None
+        
+        # Otherwise check venv for pytest
         if sys.platform == 'win32':
             pytest_path = self.venv_path / 'Scripts' / 'pytest.exe'
         else:
@@ -675,8 +857,8 @@ class TestRunner:
         """
         self.logger.info(f"Running tests in {self.repo_path}")
         
-        # Check if the virtual environment exists
-        if not self.venv_path.exists():
+        # Check if the virtual environment exists when it's supposed to
+        if self.venv_path is not None and not self.venv_path.exists():
             self.logger.error(f"Virtual environment not found at {self.venv_path}")
             return {
                 "tests_found": 0,
@@ -703,10 +885,14 @@ class TestRunner:
                 "error": f"Error getting Python path: {str(e)}"
             }
         
-        # Find all test files
-        test_files = self.find_tests()
+        # Get all test files (using provided list or by finding them)
+        test_files = self.get_test_files()
         self.logger.info(f"Found {len(test_files)} test files")
         
+        # Log the exact test files that will be run
+        for i, test_file in enumerate(test_files):
+            self.logger.info(f"Test file {i+1}: {test_file}")
+            
         # If no test files found, return empty results
         if not test_files:
             self.logger.warning("No test files found")
@@ -716,126 +902,37 @@ class TestRunner:
                 "tests_failed": 0,
                 "tests_skipped": 0,
                 "test_results": [],
-                "status": "success"
+                "status": "skip"
             }
         
-        # Try to get pytest path, but it's okay if it doesn't exist
-        pytest_path = self._get_pytest_path()
-        
-        # Install pytest if it's not found
-        if not pytest_path:
+        # Try to get pytest module, install it if needed
+        try:
+            import pytest
+        except ImportError:
             self.logger.info("pytest not found, attempting to install it")
             if not self.install_pytest():
                 self.logger.error("Failed to install pytest, cannot run tests")
                 raise RuntimeError("Failed to install pytest, cannot run tests")
-            # Try again to get pytest path after installation
-            pytest_path = self._get_pytest_path()
-        
-        # First, run with --collect-only to see if there are actual test methods
-        self.logger.info("Running pytest in collect-only mode to check for actual test methods")
-        
-        collect_cmd = []
-        if pytest_path:
-            collect_cmd = [str(pytest_path), '--collect-only', '-v']
-        else:
-            collect_cmd = [str(python_path), '-m', 'pytest', '--collect-only', '-v']
-        
-        # Run pytest in collect-only mode
-        current_dir = os.getcwd()
-        try:
-            os.chdir(self.repo_path)
             
-            # Convert test files to paths relative to repo_path
-            relative_test_files = []
-            for test_file in test_files:
-                try:
-                    relative_path = test_file.relative_to(self.repo_path)
-                    relative_test_files.append(str(relative_path))
-                except ValueError:
-                    relative_test_files.append(str(test_file))
-            
-            collect_cmd.extend(relative_test_files)
-            self.logger.info(f"Running collect-only command: {' '.join(collect_cmd)}")
-            
+            # Try importing again
             try:
-                # Log timeout before collection if it's set
-                if self.timeout:
-                    self.logger.info(f"Using timeout of {self.timeout} seconds for test collection")
-                
-                collect_result = subprocess.run(
-                    collect_cmd,
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=self.timeout  # Apply timeout to collection
-                )
-                
-                # Check if any test functions were found
-                no_tests_found = "collected 0 items" in collect_result.stdout
-                if no_tests_found:
-                    self.logger.warning("No actual test functions found in the test files")
-                    self.logger.warning("Pytest collection output: " + collect_result.stdout[:500])  # Log a part of the output
-                    
-                    # Return early with appropriate status
-                    return {
-                        "tests_found": len(test_files),
-                        "tests_passed": 0,
-                        "tests_failed": 0,
-                        "tests_skipped": len(test_files),
-                        "test_results": [
-                            {
-                                "name": str(f.relative_to(self.repo_path)),
-                                "status": "skipped",
-                                "message": "No test functions found in this file"
-                            } for f in test_files
-                        ],
-                        "status": "skipped",
-                        "warning": "Files found with test-like names, but no pytest test functions detected",
-                        "collect_stdout": collect_result.stdout,
-                        "collect_stderr": collect_result.stderr
-                    }
-            except subprocess.TimeoutExpired as e:
-                self.logger.error(f"Test collection timed out after {self.timeout} seconds")
-                return {
-                    "tests_found": len(test_files),
-                    "tests_passed": 0,
-                    "tests_failed": len(test_files),
-                    "tests_skipped": 0,
-                    "test_results": [
-                        {
-                            "name": str(f.relative_to(self.repo_path)),
-                            "status": "error",
-                            "message": f"Test collection timed out after {self.timeout} seconds"
-                        } for f in test_files
-                    ],
-                    "status": "timeout",
-                    "error": f"Test collection timed out after {self.timeout} seconds",
-                    "timeout": True
-                }
-        except Exception as e:
-            self.logger.error(f"Error during test collection: {str(e)}")
-        finally:
-            os.chdir(current_dir)
+                import pytest
+            except ImportError:
+                self.logger.error("Failed to import pytest after installation")
+                raise RuntimeError("Failed to import pytest after installation")
         
-        # Choose the command based on whether pytest is installed
-        if pytest_path:
-            self.logger.info(f"Using pytest binary at {pytest_path}")
-            cmd = [
-                str(pytest_path),
-                '-v'
-            ]
-        else:
-            self.logger.info("Using python -m pytest")
-            cmd = [
-                str(python_path),
-                '-m',
-                'pytest',
-                '-v'
-            ]
+        # Add common pytest imports
+        import tempfile
+        import xml.etree.ElementTree as ET
+        import io
+        import sys
         
-        # Add all test files as arguments, converting them to relative paths
-        # This helps avoid pathname issues when running pytest
+        # Add the repository to the Python path temporarily
+        sys.path.insert(0, str(self.repo_path))
+        
+        # Current directory to change back to
         current_dir = os.getcwd()
+        
         try:
             # Change to the repository directory to run tests with relative paths
             os.chdir(self.repo_path)
@@ -851,133 +948,356 @@ class TestRunner:
                     self.logger.warning(f"Couldn't get relative path for {test_file}, using absolute path")
                     relative_test_files.append(str(test_file))
             
-            # Add relative paths to command
-            cmd.extend(relative_test_files)
+            # Create a temporary file for the JUnit XML output
+            with tempfile.NamedTemporaryFile(suffix='.xml', delete=False) as xml_file:
+                xml_path = xml_file.name
             
-            # Run the tests
-            self.logger.info(f"Running command from {self.repo_path}: {' '.join(cmd)}")
+            self.logger.info(f"Using temporary XML file: {xml_path}")
             
-            try:
-                # Log timeout before execution if it's set
-                if self.timeout:
-                    self.logger.info(f"Using timeout of {self.timeout} seconds for test execution")
-                    
-                # For tests that might be complex or stuck, create a more robust timeout mechanism 
-                # with a bit of safety margin to allow the normal timeout to work
-                safety_timeout = self.timeout + 10
-                def hard_timeout_handler():
-                    self.logger.error(f"Process hard timeout after {self.timeout} seconds")
+            # Prepare pytest arguments
+            pytest_args = [
+                "-v",
+                "--continue-on-collection-errors",
+                f"--junitxml={xml_path}"
+            ]
+            
+            # Add test files to pytest args
+            pytest_args.extend(relative_test_files)
+            
+            # Capture console output
+            stdout_capture = io.StringIO()
+            stderr_capture = io.StringIO()
+            
+            # Set up timeout handler if needed
+            if self.timeout:
+                def timeout_handler():
+                    self.logger.error(f"Test execution timed out after {self.timeout} seconds")
                     os._exit(1)
                 
-                timer = threading.Timer(safety_timeout, hard_timeout_handler)
+                timer = threading.Timer(self.timeout, timeout_handler)
                 timer.daemon = True
                 timer.start()
+            
+            # Run pytest and capture output
+            try:
+                # Redirect stdout and stderr
+                old_stdout, old_stderr = sys.stdout, sys.stderr
+                sys.stdout, sys.stderr = stdout_capture, stderr_capture
                 
-                result = subprocess.run(
-                    cmd,
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=self.timeout  # Apply timeout to test running
-                )
+                # Run pytest
+                self.logger.info(f"Running pytest with args: {pytest_args}")
+                exit_code = pytest.main(pytest_args)
                 
-                # Cancel the safety timer if we got here successfully
+                # Get captured output
+                stdout = stdout_capture.getvalue()
+                stderr = stderr_capture.getvalue()
+            finally:
+                # Restore stdout and stderr
+                sys.stdout, sys.stderr = old_stdout, old_stderr
+                
+                # Cancel timeout timer if it exists
                 if self.timeout and 'timer' in locals():
                     timer.cancel()
-                
-                # Log more details about the test run output
-                if "collected 0 items" in result.stdout:
-                    self.logger.warning("Pytest reported 'collected 0 items' - no actual tests were run")
-                
-                # Store raw output for debugging
-                test_output = {
-                    "stdout": result.stdout,
-                    "stderr": result.stderr
-                }
-                
-                # Parse test results
-                tests_found, tests_passed, tests_failed, tests_skipped, test_results = self._parse_test_results(result.stdout, result.stderr)
-                
-                self.logger.info(f"Tests found: {tests_found}, passed: {tests_passed}, failed: {tests_failed}, skipped: {tests_skipped}")
-                
-                status = "success"
-                if "collected 0 items" in result.stdout:
-                    status = "skipped"
-                    self.logger.warning("Setting status to 'skipped' because no actual test functions were found")
-                elif tests_failed > 0:
-                    # Set status based on whether any tests passed
-                    if tests_passed > 0:
-                        status = "partial_success"
-                        self.logger.info(f"Setting status to 'partial_success' because {tests_passed} tests passed and {tests_failed} tests failed")
-                    else:
-                        status = "failure"
-                        self.logger.info(f"Setting status to 'failure' because all {tests_failed} tests failed")
-                
-                return {
-                    "tests_found": tests_found,
-                    "tests_passed": tests_passed,
-                    "tests_failed": tests_failed,
-                    "tests_skipped": tests_skipped,
-                    "test_results": test_results,
-                    "status": status,
-                    "test_output": test_output
-                }
-            except subprocess.TimeoutExpired as e:
-                self.logger.error(f"Test execution timed out after {self.timeout} seconds")
-                # Cancel any safety timer to prevent duplicate termination
-                if 'timer' in locals():
-                    timer.cancel()
+            
+            self.logger.info(f"Pytest exit code: {exit_code}")
+            
+            # Store raw output
+            test_output = {
+                "stdout": stdout,
+                "stderr": stderr
+            }
+            
+            # Initialize counters
+            tests_found = 0
+            tests_passed = 0
+            tests_failed = 0
+            tests_skipped = 0
+            test_results = []
+            file_results = []
+            
+            # Parse XML output if it exists
+            try:
+                if os.path.exists(xml_path) and os.path.getsize(xml_path) > 0:
+                    self.logger.info(f"Parsing XML results from {xml_path}")
+                    tree = ET.parse(xml_path)
+                    root = tree.getroot()
                     
-                # Force exit to prevent hanging processes
-                self.logger.error("Timeout reached - forcing process termination")
-                
-                # Return result before exiting
-                result = {
-                    "tests_found": len(test_files),
-                    "tests_passed": 0,
-                    "tests_failed": len(test_files),
-                    "tests_skipped": 0,
-                    "test_results": [
-                        {
-                            "name": str(f.relative_to(self.repo_path)),
-                            "status": "error",
-                            "message": f"Test execution timed out after {self.timeout} seconds"
-                        } for f in test_files
-                    ],
-                    "status": "timeout",
-                    "error": f"Test execution timed out after {self.timeout} seconds",
-                    "timeout": True,
-                    "test_output": {
-                        "stdout": e.stdout if e.stdout else "",
-                        "stderr": e.stderr if e.stderr else ""
-                    }
-                }
-                
-                # Exit with an error code but after returning the result
-                # Use os._exit(1) to force exit the process
-                # We need to delay the exit to allow the result to be returned
-                def exit_handler():
-                    os._exit(1)
+                    # Track file-level results
+                    file_data = {}
                     
-                threading.Timer(1.0, exit_handler).start()
-
-                
-                return result
+                    # Process test suites and test cases
+                    for testsuite in root.findall('.//testsuite'):
+                        # Get file name from testsuite attributes
+                        file_name = testsuite.get('file') or testsuite.get('name')
+                        if not file_name:
+                            continue
+                        
+                        # Initialize file data
+                        if file_name not in file_data:
+                            file_data[file_name] = {
+                                'passed': 0,
+                                'failed': 0,
+                                'skipped': 0,
+                                'tests': []
+                            }
+                        
+                        # Process individual test cases
+                        for testcase in testsuite.findall('.//testcase'):
+                            test_name = testcase.get('name')
+                            class_name = testcase.get('classname')
+                            
+                            tests_found += 1
+                            
+                            # Create test result entry
+                            test_result = {
+                                'name': test_name,
+                                'classname': class_name
+                            }
+                            
+                            # Determine test status
+                            if testcase.find('skipped') is not None:
+                                tests_skipped += 1
+                                file_data[file_name]['skipped'] += 1
+                                test_result['status'] = 'skipped'
+                                test_result['message'] = testcase.find('skipped').get('message', '')
+                            elif testcase.find('failure') is not None:
+                                tests_failed += 1
+                                file_data[file_name]['failed'] += 1
+                                test_result['status'] = 'failure'
+                                test_result['message'] = testcase.find('failure').get('message', '')
+                            elif testcase.find('error') is not None:
+                                tests_failed += 1
+                                file_data[file_name]['failed'] += 1
+                                test_result['status'] = 'error'
+                                test_result['message'] = testcase.find('error').get('message', '')
+                            else:
+                                tests_passed += 1
+                                file_data[file_name]['passed'] += 1
+                                test_result['status'] = 'passed'
+                                test_result['message'] = ''
+                            
+                            # Add to file's test list
+                            file_data[file_name]['tests'].append(test_result)
+                    
+                    # Create file-level results
+                    for file_name, data in file_data.items():
+                        # Get tested_files metadata if available
+                        tested_files = []
+                        for path_form in [file_name, os.path.basename(file_name)]:
+                            if path_form in self.test_metadata:
+                                tested_files = self.test_metadata[path_form].get("tested_files", [])
+                                break
+                        
+                        # Remove duplicates while preserving order
+                        if tested_files:
+                            seen = set()
+                            unique_tested_files = []
+                            for item in tested_files:
+                                if item not in seen:
+                                    seen.add(item)
+                                    unique_tested_files.append(item)
+                            
+                            # Log if duplicates were found and removed
+                            if len(unique_tested_files) < len(tested_files):
+                                self.logger.info(f"Removed {len(tested_files) - len(unique_tested_files)} duplicate entries from tested_files for {file_name}")
+                            
+                            # Update the metadata and our local variable
+                            if path_form in self.test_metadata:
+                                self.test_metadata[path_form]["tested_files"] = unique_tested_files
+                            tested_files = unique_tested_files
+                        
+                        # Determine file status
+                        file_status = "skipped"
+                        if data['passed'] > 0 and data['failed'] > 0:
+                            file_status = "partial_success"
+                            message = f"Some tests passed ({data['passed']}), some failed ({data['failed']})"
+                            self.logger.info(f"File {file_name} has partial success: {message}")
+                        elif data['failed'] > 0:
+                            file_status = "failure"
+                            message = f"All tests failed ({data['failed']})"
+                        elif data['passed'] > 0:
+                            file_status = "success"
+                            message = f"All tests passed ({data['passed']})"
+                        elif data['skipped'] > 0:
+                            file_status = "skipped"
+                            message = f"All tests skipped ({data['skipped']})"
+                        else:
+                            message = "No tests run"
+                        
+                        # Add file result
+                        file_result = {
+                            "path": file_name,
+                            "name": file_name,
+                            "status": file_status,
+                            "message": message,
+                            "tested_files": tested_files,
+                            "tests": data['tests'],
+                            "summary": {
+                                "passed_tests": data['passed'],
+                                "failed_tests": data['failed'],
+                                "skipped_tests": data['skipped']
+                            }
+                        }
+                        
+                        file_results.append(file_result)
+                        
+                        # Add to test_results for backwards compatibility
+                        test_results.append({
+                            "name": file_name,
+                            "status": file_status,
+                            "message": message,
+                            "tested_files": tested_files,
+                            # Include all test details in a single field
+                            "tests": data['tests'],
+                            "summary": {
+                                "passed_tests": data['passed'],
+                                "failed_tests": data['failed'],
+                                "skipped_tests": data['skipped']
+                            }
+                        })
+                        self.logger.info(f"Collected {len(data['tests'])} individual tests for {file_name}")
+                else:
+                    self.logger.warning(f"XML file not found or empty: {xml_path}")
+                    # Fall back to parsing stdout
+                    tests_found, tests_passed, tests_failed, tests_skipped, test_results = self._parse_test_results(stdout, stderr)
+                    
+                    # Create basic file results for backwards compatibility
+                    for result in test_results:
+                        file_results.append({
+                            "path": result["name"],
+                            "name": result["name"],
+                            "status": result["status"],
+                            "message": result.get("message", ""),
+                            "tested_files": result.get("tested_files", []),
+                            "tests": []  # Add empty tests array for consistency
+                        })
             except Exception as e:
-                self.logger.error(f"Error running tests: {str(e)}")
-                return {
-                    "tests_found": len(test_files),
-                    "tests_passed": 0,
-                    "tests_failed": len(test_files),
-                    "tests_skipped": 0,
-                    "test_results": [{"name": str(f.relative_to(self.repo_path)), "status": "error", "message": str(e)} for f in test_files],
-                    "status": "error",
-                    "error": str(e)
-                }
+                self.logger.error(f"Error parsing test results: {str(e)}")
+                # Fall back to parsing stdout
+                tests_found, tests_passed, tests_failed, tests_skipped, test_results = self._parse_test_results(stdout, stderr)
+                
+                # Create basic file results for backwards compatibility
+                for result in test_results:
+                    file_results.append({
+                        "path": result["name"],
+                        "name": result["name"],
+                        "status": result["status"],
+                        "message": result.get("message", ""),
+                        "tested_files": result.get("tested_files", []),
+                        "tests": []  # Add empty tests array for consistency
+                    })
+            
+            # Determine overall status
+            status = "skipped"
+            if tests_found == 0:
+                status = "skipped"
+            elif tests_passed > 0 and tests_failed == 0:
+                status = "success"
+            elif tests_passed > 0 and tests_failed > 0:
+                status = "partial_success"
+            elif tests_passed == 0 and tests_failed > 0:
+                status = "failure"
+            
+            # Count file status types
+            files_with_partial_success = sum(1 for r in file_results if r["status"] == "partial_success")
+            files_with_success = sum(1 for r in file_results if r["status"] == "success")
+            files_with_failure = sum(1 for r in file_results if r["status"] == "failure")
+            files_with_skipped = sum(1 for r in file_results if r["status"] == "skipped")
+            
+            # Create summary
+            summary = {
+                "total_files": len(file_results),
+                "passed_files": files_with_success,
+                "partial_files": files_with_partial_success,
+                "failed_files": files_with_failure,
+                "skipped_files": files_with_skipped,
+                "passed_tests": tests_passed,
+                "failed_tests": tests_failed,
+                "skipped_tests": tests_skipped
+            }
+            
+            # Extract individual test results across all files for easier access
+            individual_test_results = []
+            for file_result in file_results:
+                file_path = file_result["path"]
+                # Try to extract test details from the file result
+                if "tests" in file_result and "details" in file_result["tests"]:
+                    for test_detail in file_result["tests"]["details"]:
+                        # Create a simplified test result entry with file information
+                        individual_test_results.append({
+                            "file_path": file_path,
+                            "name": test_detail.get("name", ""),
+                            "classname": test_detail.get("classname", ""),
+                            "status": test_detail.get("status", ""),
+                            "message": test_detail.get("message", "")
+                        })
+                
+                # Also make sure the test_results array has individual test names
+                # for backwards compatibility
+                if file_path in [r["name"] for r in test_results]:
+                    for r in test_results:
+                        if r["name"] == file_path:
+                            # Check if we need to populate the tests list
+                            if not r.get("tests"):
+                                # Find individual tests for this file
+                                file_tests = [
+                                    {
+                                        "name": t["name"],
+                                        "classname": t["classname"],
+                                        "status": t["status"],
+                                        "message": t["message"]
+                                    }
+                                    for t in individual_test_results if t["file_path"] == file_path
+                                ]
+                                r["tests"] = file_tests
+                                
+                                # Make sure summary is updated too
+                                if "summary" not in r:
+                                    r["summary"] = {}
+                                
+                                passed_count = sum(1 for t in file_tests if t["status"] == "passed")
+                                failed_count = sum(1 for t in file_tests if t["status"] in ["failure", "error"])
+                                skipped_count = sum(1 for t in file_tests if t["status"] == "skipped")
+                                
+                                r["summary"].update({
+                                    "passed_tests": passed_count,
+                                    "failed_tests": failed_count,
+                                    "skipped_tests": skipped_count
+                                })
+            
+            self.logger.info(f"Test summary: {summary}")
+            self.logger.info(f"Individual tests: {len(individual_test_results)}")
+            
+            return {
+                "tests_found": tests_found,
+                "tests_passed": tests_passed,
+                "tests_failed": tests_failed,
+                "tests_skipped": tests_skipped,
+                "test_results": test_results,
+                "test_files": file_results,
+                "individual_tests": individual_test_results,  # Add individual test results
+                "summary": summary,
+                "status": status,
+                "test_output": test_output
+            }
+        
+        except Exception as e:
+            self.logger.error(f"Error running tests: {str(e)}")
+            return {
+                "tests_found": 0,
+                "tests_passed": 0,
+                "tests_failed": 0,
+                "tests_skipped": 0,
+                "test_results": [],
+                "status": "error",
+                "error": str(e)
+            }
         finally:
-            # Change back to the original directory
+            # Restore the original directory and path
             os.chdir(current_dir)
-    
+            if str(self.repo_path) in sys.path:
+                sys.path.remove(str(self.repo_path))
+
     def _parse_test_results(self, stdout, stderr):
         """
         Parse test results from stdout and stderr.
@@ -998,8 +1318,27 @@ class TestRunner:
         # Flag to track if all tests were skipped
         all_tests_skipped = False
         
+        # Flag to track if there were collection errors
+        collection_errors = False
+        
         # Flag to track if we've successfully parsed the summary
         summary_parsed = False
+        
+        # Check for collection errors - these should be treated as skipped, not failed
+        if "ImportError" in stdout or "ImportError" in stderr:
+            collection_errors = True
+            self.logger.warning("Import errors detected - some tests may be marked as skipped")
+        
+        if "ModuleNotFoundError" in stdout or "ModuleNotFoundError" in stderr:
+            collection_errors = True
+            self.logger.warning("Module not found errors detected - some tests may be marked as skipped")
+        
+        # Check for collection errors in pytest output
+        for line in stdout.splitlines() + stderr.splitlines():
+            if "error in collection" in line.lower() or "error collecting" in line.lower():
+                collection_errors = True
+                self.logger.warning("Collection errors detected - some tests may be marked as skipped")
+                break
         
         # Try to parse the test summary using regex
         summary_pattern = re.compile(r"=+\s*(\d+)\s+passed[,\s]+(\d+)\s+skipped[,\s]+(\d+)\s+failed")
@@ -1054,8 +1393,14 @@ class TestRunner:
                 
             # Check for various failure conditions
             if stderr and ("error" in stderr.lower() or "exception" in stderr.lower()):
-                # All tests failed if there was an error
-                tests_failed = tests_found
+                if collection_errors:
+                    # If we have collection errors, mark as skipped rather than failed
+                    tests_skipped = tests_found
+                    all_tests_skipped = True
+                    self.logger.warning("Collection errors detected - tests will be marked as skipped")
+                else:
+                    # Only mark as failed if we don't have collection errors
+                    tests_failed = tests_found
             elif stdout and "no tests ran" in stdout.lower():
                 # No tests ran
                 tests_skipped = tests_found
@@ -1075,65 +1420,237 @@ class TestRunner:
             
             # If no explicit values for passed/skipped, infer them
             if tests_passed == 0 and tests_skipped == 0 and tests_failed == 0:
-                # Default assumption: all tests passed if no failures detected
-                tests_passed = tests_found
+                if collection_errors:
+                    # If we have collection errors but no explicit counts, mark all as skipped
+                    tests_skipped = tests_found
+                    all_tests_skipped = True
+                    self.logger.warning("Collection errors with no explicit counts - all tests will be marked as skipped")
+                else:
+                    # Default assumption: all tests passed if no failures detected and no collection errors
+                    tests_passed = tests_found
             elif tests_passed == 0 and not all_tests_skipped:
                 # Calculate passed tests by subtraction
                 tests_passed = max(0, tests_found - tests_failed - tests_skipped)  # Ensure non-negative
-            
+        
+        # If we detect a big discrepancy between the number of test files and executed tests,
+        # it likely means many tests were not collected
+        test_files = self.find_tests()
+        if tests_found > 0 and len(test_files) > 0 and tests_found < len(test_files) / 2:
+            self.logger.warning(f"Only {tests_found} tests executed out of {len(test_files)} test files, marking uncollected tests as skipped")
+            collection_errors = True
+        
         # Parse individual test results
         test_results = []
         
-        # Get test files to create results for
-        test_files = self.find_tests()
+        # Track test files and their test results more accurately
+        file_to_tests = {}
         
-        # Try to match test failures with test files
-        test_file_dict = {}
-        for test_file in test_files:
-            test_name = str(test_file.relative_to(self.repo_path))
-            test_file_dict[test_name] = {
-                "file": test_file,
-                "failed": False,
-                "skipped": all_tests_skipped,  # Mark all tests as skipped if no tests ran
-                "message": ""
-            }
-        
+        # First pass: capture all test files and initialize tracking
+        for line in stdout.splitlines():
+            # Look for pytest result lines that include file names
+            if ' PASSED ' in line or ' FAILED ' in line or ' SKIPPED ' in line or ' ERROR ' in line:
+                try:
+                    # Extract file name and test name
+                    parts = line.split(' ', 1)[0].strip()
+                    if '::' in parts:
+                        file_name, test_name = parts.split('::', 1)
+                    else:
+                        file_name = parts
+                        test_name = parts  # Use file name as test name if no specific test
+                    
+                    # Initialize file tracking if not already done
+                    if file_name not in file_to_tests:
+                        file_to_tests[file_name] = {
+                            'passed': [],
+                            'failed': [],
+                            'skipped': [],
+                            'file_path': file_name
+                        }
+                    
+                    # Track this test result
+                    if ' PASSED ' in line:
+                        file_to_tests[file_name]['passed'].append(test_name)
+                    elif ' FAILED ' in line or ' ERROR ' in line:
+                        file_to_tests[file_name]['failed'].append(test_name)
+                    elif ' SKIPPED ' in line:
+                        file_to_tests[file_name]['skipped'].append(test_name)
+                except Exception as e:
+                    self.logger.warning(f"Error parsing test result line: {line}, error: {str(e)}")
+
         # Extract failures and match them to test files - only do detailed matching if we need to
         # Build per-file results without affecting the overall counts that we already parsed
         for line in stdout.splitlines():
-            for test_name in test_file_dict:
+            for test_name in file_to_tests:
                 if test_name in line and ("FAILED" in line or "ERROR" in line):
-                    test_file_dict[test_name]["failed"] = True
+                    file_to_tests[test_name]["failed"].append(test_name)
+                    file_to_tests[test_name]["uncollected"] = False  # Test was collected if it has a FAILED status
                     # Extract failure message (next few lines)
                     message_start = stdout.find(line) + len(line)
                     next_failure = stdout.find("FAILED", message_start)
                     if next_failure == -1:
                         next_failure = len(stdout)
                     message = stdout[message_start:next_failure].strip()
-                    test_file_dict[test_name]["message"] = message
+                    file_to_tests[test_name]["message"] = message
                     break
+                elif test_name in line and "PASSED" in line:
+                    file_to_tests[test_name]["uncollected"] = False  # Test was collected if it has a PASSED status
         
-        # Create test results using the dictionary
-        for test_name, info in test_file_dict.items():
-            if info["failed"]:
+        # Process the file_to_tests dict to create test results
+        test_results = []
+        
+        # If we found test files through the more detailed tracking, use that
+        if file_to_tests:
+            self.logger.info(f"Found {len(file_to_tests)} test files with detailed results")
+            
+            for file_name, tests in file_to_tests.items():
+                # Determine file status based on test results
+                has_passed = len(tests['passed']) > 0
+                has_failed = len(tests['failed']) > 0
+                has_skipped = len(tests['skipped']) > 0
+                
+                # Get tested_files metadata if available
+                tested_files = []
+                for path_form in [file_name, os.path.basename(file_name)]:
+                    if path_form in self.test_metadata:
+                        tested_files = self.test_metadata[path_form].get("tested_files", [])
+                        break
+                
+                status = "skipped"
+                message = ""
+                
+                if has_passed and has_failed:
+                    status = "partial_success"
+                    message = f"Some tests passed ({len(tests['passed'])}), some failed ({len(tests['failed'])})"
+                    self.logger.info(f"File {file_name} has partial success: {message}")
+                elif has_failed:
+                    status = "failure"
+                    message = f"All tests failed ({len(tests['failed'])})"
+                elif has_passed:
+                    status = "success"
+                    message = f"All tests passed ({len(tests['passed'])})"
+                elif has_skipped:
+                    status = "skipped"
+                    message = f"All tests skipped ({len(tests['skipped'])})"
+                
                 test_results.append({
-                    "name": test_name,
-                    "status": "failure",
-                    "message": info["message"]
+                    "name": file_name,
+                    "status": status,
+                    "message": message,
+                    "tested_files": tested_files,
+                    "tests": {
+                        "passed": len(tests['passed']),
+                        "failed": len(tests['failed']),
+                        "skipped": len(tests['skipped'])
+                    }
                 })
-            elif info["skipped"]:
-                test_results.append({
+        else:
+            # Fall back to the original method
+            self.logger.warning("No test files found with detailed tracking, falling back to original method")
+            
+            # Create test results using the dictionary
+            for test_name, info in test_file_dict.items():
+                # Get tested_files metadata if available
+                tested_files = []
+                # Check multiple forms of the path to find metadata
+                for path_form in [test_name, str(info["file"]), os.path.basename(test_name)]:
+                    if path_form in self.test_metadata:
+                        tested_files = self.test_metadata[path_form].get("tested_files", [])
+                        break
+                
+                # Create result with appropriate status and include tested_files
+                result_entry = {
                     "name": test_name,
-                    "status": "skipped",
-                    "message": "Test was skipped - no tests ran"
-                })
-            else:
+                    "tested_files": tested_files
+                }
+                
+                # Determine if this test file was actually executed
+                was_executed = any(test_name in executed for executed in executed_tests)
+
+                # For each test file, track if it had passed and failed tests 
+                # to accurately determine partial_success status
+                has_passed_tests = False
+                has_failed_tests = False
+                for line in stdout.splitlines():
+                    if test_name in line:
+                        if 'PASSED' in line:
+                            has_passed_tests = True
+                        elif 'FAILED' in line or 'ERROR' in line:
+                            has_failed_tests = True
+                
+                # Assign status based on individual file results
+                if has_passed_tests and has_failed_tests:
+                    # File has both passed and failed tests - partial success
+                    result_entry.update({
+                        "status": "partial_success",
+                        "message": "Some tests passed, some failed in this file"
+                    })
+                elif info["failed"]:
+                    result_entry.update({
+                        "status": "failure",
+                        "message": info["message"] or "Test failed during execution"
+                    })
+                elif has_passed_tests:
+                    result_entry.update({
+                        "status": "success",
+                        "message": ""
+                    })
+                elif info["skipped"]:
+                    result_entry.update({
+                        "status": "skipped",
+                        "message": "Test was skipped - no tests ran"
+                    })
+                elif info["uncollected"] and not was_executed:
+                    # This is the important change - mark as skipped rather than failed if it wasn't collected
+                    result_entry.update({
+                        "status": "skipped",
+                        "message": "Test was skipped - not collected due to import or setup errors"
+                    })
+                else:
+                    result_entry.update({
+                        "status": "success",
+                        "message": ""
+                    })
+                    
+                test_results.append(result_entry)
+        
+        # If no test results were created but we have test files, create minimal entries for them
+        if not test_results and len(test_files) > 0:
+            self.logger.warning("No test results found but test files exist. Creating minimal entries.")
+            for test_file in test_files:
+                rel_path = str(test_file.relative_to(self.repo_path)) if test_file.is_relative_to(self.repo_path) else str(test_file)
                 test_results.append({
-                    "name": test_name,
-                    "status": "success",
-                    "message": ""
+                    "name": rel_path,
+                    "status": "skipped" if tests_failed == 0 else "failure",
+                    "message": "No test results found for this file",
+                    "tested_files": []
                 })
         
-        self.logger.info(f"Parsed test results: found={tests_found}, passed={tests_passed}, failed={tests_failed}, skipped={tests_skipped}")
+        # If we somehow still have 0 test files but non-zero test counts, create at least one test file entry
+        if (not test_results or len(test_results) == 0) and (tests_passed > 0 or tests_failed > 0 or tests_skipped > 0):
+            self.logger.warning(f"Tests were run but no test files were identified. Creating a synthetic test file entry.")
+            test_results.append({
+                "name": "unknown_test_file.py",
+                "status": "partial_success" if tests_passed > 0 and tests_failed > 0 else 
+                          "success" if tests_passed > 0 else 
+                          "failure" if tests_failed > 0 else "skipped",
+                "message": f"Tests found={tests_found}, passed={tests_passed}, failed={tests_failed}, skipped={tests_skipped}",
+                "tested_files": []
+            })
+        
+        # Adjust counts based on our improved classification
+        if collection_errors and tests_found < len(test_files):
+            # Count how many tests we've now marked as skipped due to collection errors
+            additional_skipped = 0
+            for result in test_results:
+                if result["status"] == "skipped" and "not collected" in result.get("message", ""):
+                    additional_skipped += 1
+            
+            # Update the skipped count to include tests that weren't collected
+            tests_skipped += additional_skipped
+            
+            # Ensure total counts match
+            tests_found = tests_passed + tests_failed + tests_skipped
+        
+        self.logger.info(f"Parsed test results: found={tests_found}, passed={tests_passed}, failed={tests_failed}, skipped={tests_skipped}, files={len(test_results)}")
         
         return tests_found, tests_passed, tests_failed, tests_skipped, test_results 

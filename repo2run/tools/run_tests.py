@@ -204,9 +204,13 @@ def run_tests_with_uv(repo_path, logger):
             failed = 0
             skipped = 0
             
+            # Track files with mixed results (some tests passed, some failed)
+            files_with_partial_success = set()
+            
             for line in result.stdout.splitlines():
                 if ' PASSED ' in line:
                     test_name = line.split(' PASSED ')[0].strip()
+                    file_name = test_name.split('::')[0] if '::' in test_name else test_name
                     test_results.append({
                         "name": test_name,
                         "status": "passed"
@@ -214,6 +218,7 @@ def run_tests_with_uv(repo_path, logger):
                     passed += 1
                 elif ' FAILED ' in line:
                     test_name = line.split(' FAILED ')[0].strip()
+                    file_name = test_name.split('::')[0] if '::' in test_name else test_name
                     test_results.append({
                         "name": test_name,
                         "status": "failed"
@@ -226,6 +231,43 @@ def run_tests_with_uv(repo_path, logger):
                         "status": "skipped"
                     })
                     skipped += 1
+            
+            # Group test results by file
+            test_files = {}
+            for result in test_results:
+                test_name = result["name"]
+                file_name = test_name.split('::')[0] if '::' in test_name else test_name
+                
+                if file_name not in test_files:
+                    test_files[file_name] = {
+                        "passed": 0,
+                        "failed": 0,
+                        "skipped": 0
+                    }
+                
+                if result["status"] == "passed":
+                    test_files[file_name]["passed"] += 1
+                elif result["status"] == "failed":
+                    test_files[file_name]["failed"] += 1
+                elif result["status"] == "skipped":
+                    test_files[file_name]["skipped"] += 1
+            
+            # Create file-level results
+            file_results = []
+            for file_name, counts in test_files.items():
+                status = "success"
+                if counts["failed"] > 0 and counts["passed"] > 0:
+                    status = "partial_success"
+                elif counts["failed"] > 0:
+                    status = "failure"
+                elif counts["passed"] == 0 and counts["skipped"] > 0:
+                    status = "skipped"
+                
+                file_results.append({
+                    "path": file_name,
+                    "status": status,
+                    "tested_files": []  # No metadata available
+                })
             
             # Determine status based on test results
             if failed == 0:
@@ -249,6 +291,7 @@ def run_tests_with_uv(repo_path, logger):
                 "tests_failed": failed,
                 "tests_skipped": skipped,
                 "test_results": test_results,
+                "test_files": file_results,  # Add file-level results
                 "stdout": result.stdout,
                 "stderr": result.stderr
             }
