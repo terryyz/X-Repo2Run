@@ -2265,6 +2265,23 @@ def process_test_repo(args: argparse.Namespace, repo_data: Dict, workspace_dir: 
                 
                 add_log_entry(f"Running with PYTHONPATH: {env['PYTHONPATH']}")
                 
+                # Set up enhanced environment to ensure proper module imports
+                env = os.environ.copy()
+                
+                # Construct a better PYTHONPATH that includes:
+                # 1. The repository root (for imports relative to the repo root)
+                # 2. The current directory (for local imports)
+                pythonpaths = [str(repo_workspace), "."]
+                
+                # Combine the paths and add any existing PYTHONPATH
+                pythonpath_value = os.pathsep.join(pythonpaths)
+                if "PYTHONPATH" in env and env["PYTHONPATH"]:
+                    pythonpath_value += os.pathsep + env["PYTHONPATH"]
+                
+                env["PYTHONPATH"] = pythonpath_value
+                
+                add_log_entry(f"Running with PYTHONPATH: {env['PYTHONPATH']}")
+                
                 # Run the test with subprocess and configured environment
                 result = subprocess.run(
                     cmd,
@@ -2681,6 +2698,26 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
                     # Make executable if it's a Python file
                     if str(full_test_path).endswith(".py"):
                         os.chmod(full_test_path, 0o755)
+
+                    # Create __init__.py files in all parent directories to ensure proper imports
+                    current_dir = full_test_path.parent
+                    while current_dir != repo_path:
+                        init_file = current_dir / "__init__.py"
+                        if not init_file.exists():
+                            add_log_entry(f"Creating __init__.py in directory: {current_dir}")
+                            with open(init_file, "w") as f:
+                                f.write("#!/usr/bin/python3\n\"\"\"Package initialization\"\"\"\n")
+                        current_dir = current_dir.parent
+                    
+                    # Also ensure there's an __init__.py in the tests directory root
+                    if "tests" in str(full_test_path):
+                        tests_dir = repo_path / "tests"
+                        if tests_dir.exists() and tests_dir.is_dir():
+                            init_file = tests_dir / "__init__.py"
+                            if not init_file.exists():
+                                add_log_entry(f"Creating __init__.py in tests directory: {tests_dir}")
+                                with open(init_file, "w") as f:
+                                    f.write("#!/usr/bin/python3\n\"\"\"Tests package initialization\"\"\"\n")
                 
                 # Create stub files for tested files to prevent import errors
                 for tested_file in tested_files:
@@ -2690,6 +2727,16 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
                         tested_file_path.parent.mkdir(parents=True, exist_ok=True)
                         with open(tested_file_path, "w") as f:
                             f.write("#!/usr/bin/python3\n\"\"\"Stub file created for testing\"\"\"\n\n")
+                        
+                        # Create __init__.py files in parent directories of tested files as well
+                        current_dir = tested_file_path.parent
+                        while current_dir != repo_path:
+                            init_file = current_dir / "__init__.py"
+                            if not init_file.exists():
+                                add_log_entry(f"Creating __init__.py in tested file directory: {current_dir}")
+                                with open(init_file, "w") as f:
+                                    f.write("#!/usr/bin/python3\n\"\"\"Package initialization\"\"\"\n")
+                            current_dir = current_dir.parent
             
             if not full_test_path.exists():
                 add_log_entry(f"Test file not found at {full_test_path}. Skipping.", level="WARNING")
@@ -2697,8 +2744,10 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
             
             add_log_entry(f"Running test file: {test_path} (tests {len(tested_files)} project files)")
             
-            # Use pytest to run the test
-            cmd = [sys.executable, "-m", "pytest", str(full_test_path), "-v"]
+            # Use pytest to run the test - convert to relative path for pytest
+            # When running in repo_path as cwd, we need to use relative paths
+            test_path_rel = test_path  # Use the existing relative path rather than the full path
+            cmd = [sys.executable, "-m", "pytest", test_path_rel, "-v"]
             
             try:
                 # Set timeout if specified
@@ -2707,6 +2756,23 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
                 # Set up environment to add repo path to PYTHONPATH
                 env = os.environ.copy()
                 env["PYTHONPATH"] = str(repo_path) + os.pathsep + env.get("PYTHONPATH", "")
+                
+                add_log_entry(f"Running with PYTHONPATH: {env['PYTHONPATH']}")
+                
+                # Set up enhanced environment to ensure proper module imports
+                env = os.environ.copy()
+                
+                # Construct a better PYTHONPATH that includes:
+                # 1. The repository root (for imports relative to the repo root)
+                # 2. The current directory (for relative imports)
+                pythonpaths = [str(repo_path), "."]
+                
+                # Combine the paths and add any existing PYTHONPATH
+                pythonpath_value = os.pathsep.join(pythonpaths)
+                if "PYTHONPATH" in env and env["PYTHONPATH"]:
+                    pythonpath_value += os.pathsep + env["PYTHONPATH"]
+                
+                env["PYTHONPATH"] = pythonpath_value
                 
                 add_log_entry(f"Running with PYTHONPATH: {env['PYTHONPATH']}")
                 
