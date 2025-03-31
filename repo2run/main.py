@@ -85,6 +85,7 @@ import glob
 import concurrent.futures
 import ast
 import traceback
+import psutil
 
 from repo2run.utils.repo_manager import RepoManager
 from repo2run.utils.dependency_extractor import DependencyExtractor
@@ -2845,11 +2846,11 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
     
     # Run tests in parallel using run_tests_parallel
     test_results = run_tests_parallel(repositories, output_dir, unified_venv, args, repo_test_info)
-    
+
     # Process the results to include test file details and tested files
     enhanced_results = []
     
-    for result in test_results:
+    for result in tqdm(test_results):
         # Skip processing if this was a timeout or error result
         if result.get("status") == "error" and "timeout" in result.get("error", "").lower():
             # Just add the timeout result directly
@@ -3023,7 +3024,6 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
         # Write the enhanced result to the output file
         with open(test_results_jsonl_path, "a") as f:
             f.write(json.dumps(enhanced_result) + "\n")
-    
     # Count successful and failed repositories
     success_count = 0
     failure_count = 0
@@ -3036,7 +3036,6 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
             failure_count += 1
     
     logger.info(f"Test execution complete: {success_count} repositories succeeded/skipped, {failure_count} repositories failed")
-    
     # Return success if all repositories passed or were skipped
     return 1 if failure_count > 0 else 0
 
@@ -3547,7 +3546,66 @@ def main():
         if args.run_tests:
             # Direct mode for running tests from test.jsonl without dependency setup
             logger.info("Running tests directly from test.jsonl using current Python environment")
-            return run_tests_from_jsonl(args)
+            try:
+                return_code = run_tests_from_jsonl(args)
+                # Force cleanup of any remaining processes
+                try:
+                    # Get all child processes
+                    import psutil
+                    current_process = psutil.Process()
+                    
+                    # First try graceful termination
+                    children = current_process.children(recursive=True)
+                    for child in children:
+                        try:
+                            child.terminate()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                    
+                    # Give processes time to terminate
+                    _, still_alive = psutil.wait_procs(children, timeout=3)
+                    
+                    # Force kill any remaining processes
+                    for child in still_alive:
+                        try:
+                            child.kill()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                            
+                    # Double check for any new children
+                    for child in current_process.children(recursive=True):
+                        try:
+                            child.kill()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                            
+                    # Force cleanup of multiprocessing resources
+                    try:
+                        multiprocessing.current_process()._cleanup()
+                    except:
+                        pass
+                        
+                    # Clean up multiprocessing queues
+                    try:
+                        for q in multiprocessing.active_children():
+                            try:
+                                q.terminate()
+                            except:
+                                pass
+                    except:
+                        pass
+                except:
+                    pass
+                
+                logger.info("Cleanup complete, exiting with code {}".format(return_code))
+                # Give a moment for logging to complete
+                time.sleep(0.1)
+                os._exit(return_code)  # Force exit
+            except Exception as e:
+                logger.error(f"Error running tests: {e}")
+                # Give a moment for logging to complete
+                time.sleep(0.1)
+                os._exit(1)  # Force exit on error
         elif args.global_mode:
             # Run in unified pipeline mode (global environment)
             return run_unified_pipeline(args)

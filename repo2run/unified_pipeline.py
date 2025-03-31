@@ -1142,6 +1142,57 @@ def run_tests_for_repo(repo_info, output_dir, unified_venv, args, test_file_list
                     add_log_entry(f"Failed to clean up temporary directory: {str(e)}", level="WARNING")
 
 
+def process_repository(repo, output_dir, unified_venv, args, repo_test_info=None):
+    """Process a single repository and handle errors.
+    
+    Args:
+        repo: Repository information (tuple or Path)
+        output_dir: Output directory path
+        unified_venv: Virtual environment path
+        args: Command line arguments
+        repo_test_info: Optional dictionary mapping repository paths to test file information
+    
+    Returns:
+        dict: Test results for the repository
+    """
+    try:
+        test_file_list = None
+        test_file_metadata = None
+        
+        if repo_test_info:
+            repo_key = str(repo)
+            if repo_key in repo_test_info:
+                test_files_info = repo_test_info[repo_key]
+                if test_files_info:
+                    test_file_list = []
+                    test_file_metadata = {}
+                    for test_info in test_files_info:
+                        if "path" in test_info:
+                            test_path = test_info["path"]
+                            test_file_list.append(test_path)
+                            test_file_metadata[test_path] = {
+                                "tested_files": test_info.get("tested_files", [])
+                            }
+        
+        result = run_tests_for_repo(repo, output_dir, unified_venv, args, 
+                                  test_file_list=test_file_list,
+                                  test_file_metadata=test_file_metadata)
+        return result
+    except Exception as e:
+        # Create an error result
+        repo_str = f"{repo[0]}@{repo[1]}" if isinstance(repo, tuple) else str(repo)
+        return {
+            "repository": repo_str,
+            "status": "error",
+            "error": str(e),
+            "tests": {"found": 0, "passed": 0, "failed": 0, "skipped": 0, "details": []},
+            "execution": {
+                "start_time": time.time(),
+                "elapsed_time": 0
+            }
+        }
+
+
 def run_tests_parallel(repositories, output_dir, unified_venv, args, repo_test_info=None):
     """
     Run tests for all repositories in parallel.
@@ -1189,46 +1240,125 @@ def run_tests_parallel(repositories, output_dir, unified_venv, args, repo_test_i
     # Use more workers for larger numbers of repositories
     # but don't exceed available CPU cores
     import multiprocessing
+    import signal
+    import psutil
+    import threading
+    import queue
+    import functools
     available_cores = multiprocessing.cpu_count()
     suggested_workers = min(available_cores, len(repositories), 16)  
     max_workers = suggested_workers
     logger.info(f"Using {max_workers} worker processes for parallel test execution")
     
+    def kill_process_tree(pid):
+        """Kill a process and all its children."""
+        try:
+            parent = psutil.Process(pid)
+            children = parent.children(recursive=True)
+            
+            # Send SIGTERM to children first
+            for child in children:
+                try:
+                    child.terminate()
+                except psutil.NoSuchProcess:
+                    pass
+            
+            # Send SIGTERM to parent
+            try:
+                parent.terminate()
+            except psutil.NoSuchProcess:
+                pass
+            
+            # Wait for processes to terminate
+            gone, alive = psutil.wait_procs(children + [parent], timeout=3)
+            
+            # If any processes are still alive, send SIGKILL
+            for p in alive:
+                try:
+                    p.kill()
+                except psutil.NoSuchProcess:
+                    pass
+                
+            # Double check if parent is still alive
+            try:
+                if parent.is_running():
+                    parent.kill()  # Force kill if still running
+            except psutil.NoSuchProcess:
+                pass
+            
+            # Double check children
+            for child in children:
+                try:
+                    if child.is_running():
+                        child.kill()  # Force kill if still running
+                except psutil.NoSuchProcess:
+                    pass
+        except psutil.NoSuchProcess:
+            pass
+        except Exception as e:
+            logger.warning(f"Error killing process tree {pid}: {e}")
+    
+    def cleanup_process(future, repo_name=None):
+        """Clean up a process associated with a future."""
+        if not future.done():
+            try:
+                # Get the process ID if available
+                if hasattr(future, '_process'):
+                    pid = future._process.pid
+                    if repo_name:
+                        logger.warning(f"Killing process tree for repository {repo_name} (PID: {pid})")
+                    kill_process_tree(pid)
+                
+                # Cancel the future
+                future.cancel()
+                
+                # Wait a short time for cancellation to take effect
+                time.sleep(0.1)
+                
+                # Force cancel again if still not done
+                if not future.done():
+                    future.cancel()
+            except Exception as e:
+                logger.warning(f"Error cleaning up process: {e}")
+    
+    # Create a threading Event for signaling shutdown
+    shutdown_event = threading.Event()
+    
+    def worker_init():
+        """Initialize worker process"""
+        # Ignore SIGINT in worker processes
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        
+        # Set up process group for easier cleanup
+        os.setpgrp()
+    
     # Process repositories in parallel
     all_results = []
+    executor = None
+    timeout_threads = []  # Keep track of timeout threads
     
-    # Use a process pool for test running to enable proper timeout handling
-    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+    try:
+        # Create a partial function with fixed arguments
+        process_repo = functools.partial(
+            process_repository,
+            output_dir=output_dir,
+            unified_venv=unified_venv,
+            args=args,
+            repo_test_info=repo_test_info
+        )
+        
+        # Use a process pool for test running to enable proper timeout handling
+        executor = concurrent.futures.ProcessPoolExecutor(
+            max_workers=max_workers, 
+            initializer=worker_init
+        )
+        
         # Submit all tasks
         future_to_repo = {}
         for repo in repositories:
-            # Get test files for this repo if available
-            test_file_list = None
-            test_file_metadata = None
-            if repo_test_info:
-                # Get the correct key format based on repo type
-                if isinstance(repo, tuple):
-                    full_name, sha = repo
-                    repo_key = f"{full_name}@{sha}"
-                else:
-                    repo_key = str(repo)
-                
-                if repo_key in repo_test_info:
-                    test_files_info = repo_test_info[repo_key]
-                    if test_files_info:
-                        test_file_list = []
-                        test_file_metadata = {}
-                        
-                        for test_info in test_files_info:
-                            if "path" in test_info:
-                                test_path = test_info["path"]
-                                test_file_list.append(test_path)
-                                test_file_metadata[test_path] = {
-                                    "tested_files": test_info.get("tested_files", [])
-                                }
-                        
-            # Submit task with timeout
-            future = executor.submit(run_tests_for_repo, repo, output_dir, unified_venv, args, test_file_list, test_file_metadata)
+            if shutdown_event.is_set():
+                break
+            future = executor.submit(process_repo, repo)
             future_to_repo[future] = repo
         
         # Process results as they complete with a detailed progress bar
@@ -1245,73 +1375,226 @@ def run_tests_parallel(repositories, output_dir, unified_venv, args, repo_test_i
         # Create a progress bar with more information
         with tqdm(total=len(repositories), desc="Running tests", 
                  bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]") as pbar:
-            for future in concurrent.futures.as_completed(future_to_repo):
-                repo = future_to_repo[future]
-                try:
-                    # Display which repository is currently being processed
-                    repo_name = repo[0] if isinstance(repo, tuple) else Path(repo).name
-                    pbar.set_postfix_str(f"Processing {repo_name}")
+            
+            completed_futures = set()
+            while len(completed_futures) < len(future_to_repo):
+                if shutdown_event.is_set():
+                    break
+                
+                # Check for completed futures
+                newly_completed = {f for f in future_to_repo if f.done() and f not in completed_futures}
+                
+                for future in newly_completed:
+                    repo = future_to_repo[future]
+                    completed_futures.add(future)
                     
-                    # Wait for result with timeout
                     try:
-                        result = future.result(timeout=args.timeout)
-                    except concurrent.futures.TimeoutError:
-                        # Create a timeout result
-                        result = {
-                            "repository": repo[0] + "@" + repo[1] if isinstance(repo, tuple) else str(repo),
+                        # Display which repository is currently being processed
+                        repo_name = repo[0] if isinstance(repo, tuple) else Path(repo).name
+                        pbar.set_postfix_str(f"Processing {repo_name}")
+                        
+                        try:
+                            result = future.result(timeout=1)  # Short timeout for result retrieval
+                        except concurrent.futures.TimeoutError:
+                            # Clean up the process
+                            cleanup_process(future, repo_name)
+                            
+                            # Create a timeout result
+                            result = {
+                                "repository": repo[0] + "@" + repo[1] if isinstance(repo, tuple) else str(repo),
+                                "status": "error",
+                                "error": f"Test execution timed out after {args.timeout} seconds",
+                                "tests": {"found": 0, "passed": 0, "failed": 0, "skipped": 0, "details": []},
+                                "execution": {
+                                    "start_time": time.time() - args.timeout,
+                                    "elapsed_time": args.timeout
+                                }
+                            }
+                            logger.error(f"Repository {repo_name} timed out after {args.timeout} seconds")
+                        
+                        if result is not None:
+                            all_results.append(result)
+                            
+                            # Update test statistics
+                            repo_tests = result.get("tests", {})
+                            total_tests += repo_tests.get("found", 0)
+                            passed_tests += repo_tests.get("passed", 0)
+                            failed_tests += repo_tests.get("failed", 0)
+                            skipped_tests += repo_tests.get("skipped", 0)
+                            
+                            # Update status in progress bar
+                            status = result.get("status", "unknown")
+                            pbar.set_postfix_str(f"{repo_name}: {status}")
+                            
+                            # Count individual tests if available
+                            if "individual_tests" in result:
+                                individual_tests = result["individual_tests"]
+                                total_individual_tests += len(individual_tests)
+                                passed_individual_tests += sum(1 for t in individual_tests if t.get("status") == "passed")
+                                failed_individual_tests += sum(1 for t in individual_tests if t.get("status") in ["failed", "failure", "error"])
+                                skipped_individual_tests += sum(1 for t in individual_tests if t.get("status") == "skipped")
+                            
+                            # Track skipped files
+                            if "skipped_files" in result:
+                                total_skipped_files += result["skipped_files"].get("count", 0)
+                    
+                    except Exception as e:
+                        # Handle any other errors
+                        repo_str = f"{repo[0]}@{repo[1]}" if isinstance(repo, tuple) else str(repo)
+                        logger.error(f"Error processing {repo_str}: {str(e)}")
+                        # Create an error result
+                        error_result = {
+                            "repository": repo_str,
                             "status": "error",
-                            "error": f"Test execution timed out after {args.timeout} seconds",
+                            "error": str(e),
                             "tests": {"found": 0, "passed": 0, "failed": 0, "skipped": 0, "details": []},
                             "execution": {
-                                "start_time": time.time() - args.timeout,
-                                "elapsed_time": args.timeout
+                                "start_time": time.time(),
+                                "elapsed_time": 0
                             }
                         }
-                        logger.error(f"Repository {repo_name} timed out after {args.timeout} seconds")
+                        all_results.append(error_result)
+                        
+                        # Clean up the process in case of error
+                        cleanup_process(future, repo_str)
                     
-                    all_results.append(result)
-                    
-                    # Update test statistics
-                    repo_tests = result.get("tests", {})
-                    total_tests += repo_tests.get("found", 0)
-                    passed_tests += repo_tests.get("passed", 0)
-                    failed_tests += repo_tests.get("failed", 0)
-                    skipped_tests += repo_tests.get("skipped", 0)
-                    
-                    # Update status in progress bar
-                    status = result.get("status", "unknown")
-                    pbar.set_postfix_str(f"{repo_name}: {status}")
-                    
-                    # Count individual tests if available
-                    if "individual_tests" in result:
-                        individual_tests = result["individual_tests"]
-                        total_individual_tests += len(individual_tests)
-                        passed_individual_tests += sum(1 for t in individual_tests if t.get("status") == "passed")
-                        failed_individual_tests += sum(1 for t in individual_tests if t.get("status") in ["failed", "failure", "error"])
-                        skipped_individual_tests += sum(1 for t in individual_tests if t.get("status") == "skipped")
-                    
-                    # Track skipped files
-                    if "skipped_files" in result:
-                        total_skipped_files += result["skipped_files"].get("count", 0)
+                    pbar.update(1)
                 
-                except Exception as e:
-                    # Handle any other errors
-                    repo_str = f"{repo[0]}@{repo[1]}" if isinstance(repo, tuple) else str(repo)
-                    logger.error(f"Error processing {repo_str}: {str(e)}")
-                    # Create an error result
-                    error_result = {
-                        "repository": repo_str,
-                        "status": "error",
-                        "error": str(e),
-                        "tests": {"found": 0, "passed": 0, "failed": 0, "skipped": 0, "details": []},
-                        "execution": {
-                            "start_time": time.time(),
-                            "elapsed_time": 0
-                        }
-                    }
-                    all_results.append(error_result)
+                # Check for hung processes
+                current_time = time.time()
+                for future, repo in future_to_repo.items():
+                    if future not in completed_futures and not future.done():
+                        # Get process info if available
+                        if hasattr(future, '_process'):
+                            try:
+                                process = psutil.Process(future._process.pid)
+                                if (current_time - process.create_time()) > args.timeout:
+                                    repo_name = repo[0] if isinstance(repo, tuple) else Path(repo).name
+                                    logger.warning(f"Process for {repo_name} exceeded timeout, killing...")
+                                    cleanup_process(future, repo_name)
+                                    completed_futures.add(future)
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                pass
                 
-                pbar.update(1)
+                # Short sleep to prevent busy waiting
+                time.sleep(0.1)
+        
+        # Cancel any remaining futures
+        for future in future_to_repo:
+            if not future.done():
+                cleanup_process(future)
+    
+    except KeyboardInterrupt:
+        logger.warning("Received keyboard interrupt, initiating graceful shutdown...")
+        shutdown_event.set()
+        
+        # Cancel all pending futures
+        for future in future_to_repo:
+            if not future.done():
+                cleanup_process(future)
+        
+        raise
+    
+    finally:
+        # Set shutdown event to stop any monitoring threads
+        shutdown_event.set()
+        
+        # Clean up all processes
+        if executor is not None:
+            try:
+                # Cancel all pending futures
+                for future in future_to_repo:
+                    if not future.done():
+                        cleanup_process(future)
+                
+                # Shutdown the executor with a timeout
+                executor.shutdown(wait=False)
+                
+                # Give a short time for cleanup
+                time.sleep(0.5)
+                
+                # Force kill any remaining processes
+                for future in future_to_repo:
+                    if hasattr(future, '_process'):
+                        try:
+                            kill_process_tree(future._process.pid)
+                        except:
+                            pass
+                
+                # Clean up executor resources safely
+                try:
+                    if hasattr(executor, '_processes'):
+                        executor._processes.clear()
+                except:
+                    pass
+                try:
+                    if hasattr(executor, '_shutdown_thread'):
+                        executor._shutdown_thread = None
+                except:
+                    pass
+                try:
+                    if hasattr(executor, '_call_queue'):
+                        executor._call_queue.close()
+                        executor._call_queue.join_thread()
+                except:
+                    pass
+                try:
+                    if hasattr(executor, '_result_queue'):
+                        executor._result_queue.close()
+                        executor._result_queue.join_thread()
+                except:
+                    pass
+                
+                # Stop any timeout threads
+                for thread in timeout_threads:
+                    try:
+                        if thread.is_alive():
+                            thread._stop()
+                    except:
+                        pass
+            except:
+                pass
+            finally:
+                try:
+                    del executor
+                except:
+                    pass
+        
+        # Clean up any remaining processes
+        try:
+            current_process = psutil.Process()
+            
+            # First try graceful termination
+            for child in current_process.children(recursive=True):
+                try:
+                    child.terminate()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            
+            # Give processes time to terminate
+            _, still_alive = psutil.wait_procs(current_process.children(), timeout=3)
+            
+            # Force kill any remaining processes
+            for child in still_alive:
+                try:
+                    child.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+                    
+            # Double check for any new children
+            for child in current_process.children(recursive=True):
+                try:
+                    child.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+                    
+            # Force cleanup of multiprocessing resources
+            try:
+                multiprocessing.current_process()._cleanup()
+            except:
+                pass
+        except:
+            pass
     
     # Count repositories by status
     status_counts = {
