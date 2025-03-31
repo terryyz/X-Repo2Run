@@ -2850,7 +2850,7 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
     # Process the results to include test file details and tested files
     enhanced_results = []
     
-    for result in tqdm(test_results):
+    for result in test_results:
         # Skip processing if this was a timeout or error result
         if result.get("status") == "error" and "timeout" in result.get("error", "").lower():
             # Just add the timeout result directly
