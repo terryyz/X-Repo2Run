@@ -34,7 +34,7 @@ Options:
     --local-list FILE      Text file containing list of local directories
     --output-dir DIR       Directory to store output files (default: output)
     --workspace-dir DIR    Directory to use as workspace (default: temporary directory)
-    --timeout SECONDS      Timeout in seconds (default: 7200 - 2 hours)
+    --timeout SECONDS      Timeout in seconds (default: 1800 - 0.5 houra)
     --verbose              Enable verbose logging
     --overwrite            Overwrite existing output directory if it exists
     --use-uv               Use UV for dependency management (default: False, use pip/venv)
@@ -103,8 +103,8 @@ def parse_arguments():
     parser.add_argument(
         '--timeout', 
         type=int, 
-        default=7200,
-        help='Timeout in seconds (default: 7200 - 2 hours)'
+        default=1800,
+        help='Timeout in seconds (default: 1800 - 0.5 houra)'
     )
     parser.add_argument(
         '--verbose', 
@@ -1192,66 +1192,43 @@ def run_tests_parallel(repositories, output_dir, unified_venv, args, repo_test_i
     available_cores = multiprocessing.cpu_count()
     suggested_workers = min(available_cores, len(repositories), 16)  
     max_workers = suggested_workers
-    logger.info(f"Increasing worker threads to {max_workers} for better parallelism")
+    logger.info(f"Using {max_workers} worker processes for parallel test execution")
     
     # Process repositories in parallel
     all_results = []
     
-    # Use a thread pool for the test running
+    # Use a process pool for test running to enable proper timeout handling
     with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks
         future_to_repo = {}
         for repo in repositories:
             # Get test files for this repo if available
             test_file_list = None
+            test_file_metadata = None
             if repo_test_info:
                 # Get the correct key format based on repo type
                 if isinstance(repo, tuple):
-                    # For GitHub repos (tuple format), we need to match the format from test.jsonl
                     full_name, sha = repo
                     repo_key = f"{full_name}@{sha}"
                 else:
-                    # For local directories (Path format), convert to string
                     repo_key = str(repo)
                 
                 if repo_key in repo_test_info:
-                    # Extract test file paths from the test info
                     test_files_info = repo_test_info[repo_key]
                     if test_files_info:
-                        # Extract paths and other info from test info
                         test_file_list = []
-                        test_file_metadata = {}  # Store additional metadata for each test file path
+                        test_file_metadata = {}
                         
                         for test_info in test_files_info:
                             if "path" in test_info:
                                 test_path = test_info["path"]
                                 test_file_list.append(test_path)
-                                
-                                # Get tested_files information for this test file
-                                tested_files = test_info.get("tested_files", [])
-                                
-                                # Store the metadata
                                 test_file_metadata[test_path] = {
-                                    "tested_files": tested_files
+                                    "tested_files": test_info.get("tested_files", [])
                                 }
                         
-                        logger.info(f"Using {len(test_file_list)} test files from test.jsonl for repository {repo_key}")
-                        
-                        # Pass both the test file list and the metadata
-                        future = executor.submit(
-                            run_tests_for_repo, 
-                            repo, 
-                            output_dir, 
-                            unified_venv, 
-                            args, 
-                            test_file_list,
-                            test_file_metadata
-                        )
-                        future_to_repo[future] = repo
-                        continue
-            
-            # If we didn't start a task above, submit one without test files
-            future = executor.submit(run_tests_for_repo, repo, output_dir, unified_venv, args, None, None)
+            # Submit task with timeout
+            future = executor.submit(run_tests_for_repo, repo, output_dir, unified_venv, args, test_file_list, test_file_metadata)
             future_to_repo[future] = repo
         
         # Process results as they complete with a detailed progress bar
@@ -1259,14 +1236,10 @@ def run_tests_parallel(repositories, output_dir, unified_venv, args, repo_test_i
         passed_tests = 0
         failed_tests = 0
         skipped_tests = 0
-        
-        # Track total individual tests
         total_individual_tests = 0
         passed_individual_tests = 0
         failed_individual_tests = 0
         skipped_individual_tests = 0
-        
-        # Track skipped files
         total_skipped_files = 0
         
         # Create a progress bar with more information
@@ -1276,16 +1249,26 @@ def run_tests_parallel(repositories, output_dir, unified_venv, args, repo_test_i
                 repo = future_to_repo[future]
                 try:
                     # Display which repository is currently being processed
-                    repo_name = ""
-                    if isinstance(repo, tuple):
-                        repo_name = repo[0]  # GitHub repo name
-                    else:
-                        # For Path objects or string paths
-                        path_obj = Path(repo) if not isinstance(repo, Path) else repo
-                        repo_name = path_obj.name  # Local directory name
-                    
+                    repo_name = repo[0] if isinstance(repo, tuple) else Path(repo).name
                     pbar.set_postfix_str(f"Processing {repo_name}")
-                    result = future.result()
+                    
+                    # Wait for result with timeout
+                    try:
+                        result = future.result(timeout=args.timeout)
+                    except concurrent.futures.TimeoutError:
+                        # Create a timeout result
+                        result = {
+                            "repository": repo[0] + "@" + repo[1] if isinstance(repo, tuple) else str(repo),
+                            "status": "error",
+                            "error": f"Test execution timed out after {args.timeout} seconds",
+                            "tests": {"found": 0, "passed": 0, "failed": 0, "skipped": 0, "details": []},
+                            "execution": {
+                                "start_time": time.time() - args.timeout,
+                                "elapsed_time": args.timeout
+                            }
+                        }
+                        logger.error(f"Repository {repo_name} timed out after {args.timeout} seconds")
+                    
                     all_results.append(result)
                     
                     # Update test statistics
@@ -1312,12 +1295,21 @@ def run_tests_parallel(repositories, output_dir, unified_venv, args, repo_test_i
                         total_skipped_files += result["skipped_files"].get("count", 0)
                 
                 except Exception as e:
-                    # Handle error message formatting for both tuple and Path objects
-                    if isinstance(repo, tuple):
-                        repo_str = f"{repo[0]}@{repo[1]}"
-                    else:
-                        repo_str = str(repo)
+                    # Handle any other errors
+                    repo_str = f"{repo[0]}@{repo[1]}" if isinstance(repo, tuple) else str(repo)
                     logger.error(f"Error processing {repo_str}: {str(e)}")
+                    # Create an error result
+                    error_result = {
+                        "repository": repo_str,
+                        "status": "error",
+                        "error": str(e),
+                        "tests": {"found": 0, "passed": 0, "failed": 0, "skipped": 0, "details": []},
+                        "execution": {
+                            "start_time": time.time(),
+                            "elapsed_time": 0
+                        }
+                    }
+                    all_results.append(error_result)
                 
                 pbar.update(1)
     

@@ -50,7 +50,7 @@ Options:
     --global               Use the unified global pipeline (single environment for all repositories)
     --output-dir DIR       Directory to store output files (default: output)
     --workspace-dir DIR    Directory to use as workspace (default: temporary directory)
-    --timeout SECONDS      Timeout in seconds (default: 7200 - 2 hours). Tests that exceed this time will be forcibly terminated.
+    --timeout SECONDS      Timeout in seconds (default: 1800 - 0.5 hours). Tests that exceed this time will be forcibly terminated.
     --verbose             Enable verbose logging
     --overwrite           Overwrite existing output directory if it exists
     --use-uv             Use UV for dependency management (default: False, use pip/venv)
@@ -188,8 +188,8 @@ def parse_arguments():
     parser.add_argument(
         '--timeout', 
         type=int, 
-        default=7200,
-        help='Timeout in seconds (default: 7200 - 2 hours). Tests that exceed this time will be forcibly terminated.'
+        default=1800,
+        help='Timeout in seconds (default: 1800 - 0.5 houra). Tests that exceed this time will be forcibly terminated.'
     )
     parser.add_argument(
         '--verbose', 
@@ -1705,39 +1705,50 @@ def extract_local_imports_from_test_file(test_file: Path, repository_path: Path,
         tested_files = set()
         all_imports = set()
         
+        def add_module_path(module_name: str, is_from_import: bool = False):
+            """Helper function to add a module path and check its existence"""
+            # Convert dot notation to path notation
+            module_path = module_name.replace('.', '/')
+            
+            # Try direct file match first
+            py_file = repository_path / (module_path + '.py')
+            dir_path = repository_path / module_path
+            init_file = dir_path / '__init__.py'
+            
+            if py_file.exists():
+                tested_files.add(module_path + '.py')
+                return True
+            elif init_file.exists():
+                # If it's a directory with __init__.py, mark it as a package
+                tested_files.add(module_path + '/')
+                return True
+            
+            # For from imports, also check each segment of the path
+            if is_from_import:
+                parts = module_path.split('/')
+                found = False
+                for i in range(len(parts)):
+                    partial_path = '/'.join(parts[:i+1])
+                    py_path = repository_path / (partial_path + '.py')
+                    dir_path = repository_path / partial_path
+                    init_path = dir_path / '__init__.py'
+                    
+                    if py_path.exists():
+                        tested_files.add(partial_path + '.py')
+                        found = True
+                    elif init_path.exists():
+                        tested_files.add(partial_path + '/')
+                        found = True
+                return found
+            return False
+        
         # Process all import statements in the AST
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for name in node.names:
                     module_name = name.name
                     all_imports.add(module_name)
-                    
-                    # Convert dot notation to path notation
-                    module_path = module_name.replace('.', '/')
-                    
-                    # Try direct file match first
-                    py_file = repository_path / (module_path + '.py')
-                    dir_path = repository_path / module_path
-                    init_file = dir_path / '__init__.py'
-                    
-                    if py_file.exists():
-                        tested_files.add(module_path + '.py')
-                    elif init_file.exists():
-                        # If it's a directory with __init__.py, mark it as a package
-                        tested_files.add(module_path + '/')
-                    
-                    # Also check each segment of the import path to catch parent modules
-                    parts = module_path.split('/')
-                    for i in range(len(parts)):
-                        partial_path = '/'.join(parts[:i+1])
-                        py_path = repository_path / (partial_path + '.py')
-                        dir_path = repository_path / partial_path
-                        init_path = dir_path / '__init__.py'
-                        
-                        if py_path.exists():
-                            tested_files.add(partial_path + '.py')
-                        elif init_path.exists():
-                            tested_files.add(partial_path + '/')
+                    add_module_path(module_name)
             
             elif isinstance(node, ast.ImportFrom):
                 # Handle relative imports (level > 0)
@@ -1749,8 +1760,6 @@ def extract_local_imports_from_test_file(test_file: Path, repository_path: Path,
                     target_dir = importing_file_dir
                     for _ in range(node.level):
                         if target_dir == repository_path:
-                            # Don't go beyond the repository root
-                            logger.warning(f"Relative import in {test_file} tried to go beyond repository root")
                             break
                         target_dir = target_dir.parent
                     
@@ -1778,11 +1787,9 @@ def extract_local_imports_from_test_file(test_file: Path, repository_path: Path,
                         # Also check imported names for potential modules
                         for imported_name in node.names:
                             name = imported_name.name
-                            # Skip * imports for submodule checks
                             if name == '*':
                                 continue
-                                
-                            # Check if the import is a module (not just a symbol)
+                            
                             potential_module = resolved_path / name
                             potential_module_py = potential_module.with_suffix('.py')
                             potential_module_init = potential_module / '__init__.py'
@@ -1800,89 +1807,59 @@ def extract_local_imports_from_test_file(test_file: Path, repository_path: Path,
                                 except ValueError:
                                     pass
                     except ValueError:
-                        # This happens if resolved_path is not under repository_path
-                        logger.warning(f"Could not resolve relative import in {test_file} - path outside repository")
-                    
+                        logger.warning(f"Could not resolve relative import in {test_file}")
+                
                 # Handle absolute imports (level = 0)
                 else:
                     if node.module:
                         module_name = node.module
                         all_imports.add(module_name)
-                        module_path = module_name.replace('.', '/')
                         
-                        # Try direct file match first
-                        py_file = repository_path / (module_path + '.py')
-                        dir_path = repository_path / module_path
-                        init_file = dir_path / '__init__.py'
-                        
-                        if py_file.exists():
-                            tested_files.add(module_path + '.py')
-                        elif init_file.exists():
-                            # If it's a directory with __init__.py, mark it as a package
-                            tested_files.add(module_path + '/')
-                        
-                        # Also check each segment of the import path
-                        parts = module_path.split('/')
-                        for i in range(len(parts)):
-                            partial_path = '/'.join(parts[:i+1])
-                            py_path = repository_path / (partial_path + '.py')
-                            dir_path = repository_path / partial_path
-                            init_path = dir_path / '__init__.py'
-                            
-                            if py_path.exists():
-                                tested_files.add(partial_path + '.py')
-                            elif init_path.exists():
-                                tested_files.add(partial_path + '/')
+                        # Add the base module
+                        add_module_path(module_name, True)
                         
                         # Also check for the imported items if they might be submodules
                         for imp_name in node.names:
+                            if imp_name.name == '*':
+                                continue
+                            
+                            # Try both as a module and as part of the parent module
                             full_name = f"{module_name}.{imp_name.name}"
                             all_imports.add(full_name)
-                            full_path = full_name.replace('.', '/')
-                            py_path = repository_path / (full_path + '.py')
-                            dir_path = repository_path / full_path
-                            init_path = dir_path / '__init__.py'
-                            
-                            if py_path.exists():
-                                tested_files.add(full_path + '.py')
-                            elif init_path.exists():
-                                tested_files.add(full_path + '/')
+                            add_module_path(full_name, True)
         
-        # If we found nothing with AST or the import pattern is complex,
-        # double-check with regex as a backup
-        if not tested_files or any('*' in imp or '?' in imp for imp in all_imports):
-            logger.debug(f"AST found no imports or complex patterns found, trying regex as well")
+        # If we found nothing with AST, try regex as a backup
+        if not tested_files:
+            logger.debug(f"AST found no imports, trying regex as backup")
             regex_results = extract_imports_with_regex(test_file, repository_path, content, logger)
-            for result in regex_results:
-                tested_files.add(result)
+            tested_files.update(regex_results)
+        
+        # Special handling for common patterns
+        # If we see imports from 'app', make sure to include the app directory
+        if any('app.' in imp for imp in all_imports) or 'app' in all_imports:
+            app_dir = repository_path / 'app'
+            if app_dir.exists() and (app_dir / '__init__.py').exists():
+                tested_files.add('app/')
         
         # Filter out directories if they only exist because we have more specific files
-        # This preserves directories that were directly imported
         result = list(tested_files)
-        
-        # Filter out any directory if we already have files within that directory
-        # and it's not a direct import (i.e., was only added as a parent of something else)
         final_results = []
         for path in result:
-            # If this path is a directory (ends with '/')
             if path.endswith('/'):
-                # Check if we already have more specific files in this directory
+                # Only keep directories that were directly imported
                 has_specific_files = any(
-                    other_path.startswith(path) and not other_path.endswith('/') 
+                    other_path.startswith(path) and not other_path.endswith('/')
                     for other_path in result
                 )
-                
-                # Only keep the directory if we don't have specific files within it
-                # or it was directly imported
-                if not has_specific_files:
+                if not has_specific_files or path == 'app/':  # Always keep app/ directory
                     final_results.append(path)
             else:
                 final_results.append(path)
         
-        # If we ended up with nothing, don't filter at all - fall back to the original set
+        # If we filtered too much, return the original
         if not final_results and tested_files:
             return sorted(list(tested_files))
-            
+        
         return sorted(final_results)
     
     except Exception as e:
@@ -2442,21 +2419,21 @@ def process_test_repo(args: argparse.Namespace, repo_data: Dict, workspace_dir: 
                     env=env
                 )
                 
-                # Determine status
-                status = "success" if result.returncode == 0 else "failure"
+                # Determine status based on test results
+                test_file_status = "success" if result.returncode == 0 else "failure"
                 
                 # Store the result
                 test_results.append({
                     "name": str(test_file.relative_to(repo_workspace)),
-                    "status": status,
+                    "status": test_file_status,
                     "message": result.stdout + "\n" + result.stderr,
                     "returncode": result.returncode
                 })
                 
-                add_log_entry(f"Test {test_file.relative_to(repo_workspace)} completed with status: {status}")
+                add_log_entry(f"Test {test_file.relative_to(repo_workspace)} completed with status: {test_file_status}")
                 
                 # Display detailed test output if verbose and test failed
-                if args.verbose and status == "failure":
+                if args.verbose and test_file_status == "failure":
                     add_log_entry(f"Test failure details for {test_file.relative_to(repo_workspace)}:", level="ERROR")
                     # Print a reasonable amount of the error message, capped to avoid overwhelming output
                     error_lines = (result.stdout + "\n" + result.stderr).split("\n")
@@ -2597,11 +2574,25 @@ def process_test_repo(args: argparse.Namespace, repo_data: Dict, workspace_dir: 
                 # Add the tests array to the test file result
                 test_results[i]["tests"] = tests_by_file[file_path]
                 
-                # Log the counts
-                passed_count = sum(1 for t in tests_by_file[file_path] if t.get("status") == "passed")
-                failed_count = sum(1 for t in tests_by_file[file_path] if t.get("status") == "failed")
-                skipped_count = sum(1 for t in tests_by_file[file_path] if t.get("status") == "skipped")
-                add_log_entry(f"File {file_path}: {passed_count} passed, {failed_count} failed, {skipped_count} skipped")
+                # Update test file status based on test results
+                tests = tests_by_file[file_path]
+                passed_count = sum(1 for t in tests if t.get("status") == "passed")
+                failed_count = sum(1 for t in tests if t.get("status") == "failed")
+                skipped_count = sum(1 for t in tests if t.get("status") == "skipped")
+                
+                # Update test file status based on actual test results
+                if len(tests) == 0:
+                    test_results[i]["status"] = "skipped"
+                elif failed_count > 0 and passed_count == 0:
+                    test_results[i]["status"] = "failure"
+                elif failed_count > 0 and passed_count > 0:
+                    test_results[i]["status"] = "partial_success"
+                elif passed_count > 0:
+                    test_results[i]["status"] = "success"
+                else:
+                    test_results[i]["status"] = "skipped"
+                
+                add_log_entry(f"File {file_path}: {passed_count} passed, {failed_count} failed, {skipped_count} skipped, status: {test_results[i]['status']}")
         
         # Create a proper test_files array for the final result
         result_test_files = []
@@ -2733,10 +2724,6 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
         logger.error(f"Test file {test_jsonl_path} does not exist. Run --extract-tests first.")
         return 1
     
-    # Set require_tested_files flag
-    if hasattr(args, 'require_tested_files') and args.require_tested_files:
-        logger.info("Require tested_files mode is enabled - will skip test files without tested_files information")
-    
     # Create or clear test_results.jsonl file
     test_results_jsonl_path = output_dir / "test_results.jsonl"
     if test_results_jsonl_path.exists():
@@ -2766,6 +2753,37 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
         logger.info("No repositories found in test.jsonl")
         return 1
     
+    # Set require_tested_files flag
+    if hasattr(args, 'require_tested_files') and args.require_tested_files:
+        logger.info("Require tested_files mode is enabled - will skip test files without tested_files information")
+    
+        # Filter repositories to only include those with valid test files
+        filtered_repositories_data = []
+        for repo_data in repositories_data:
+            repo_identifier = repo_data.get("repository", "")
+            tests = repo_data.get("tests", [])
+            
+            # Filter tests to only include those with non-empty tested_files
+            valid_tests = [test for test in tests if test.get("tested_files")]
+            
+            if valid_tests:
+                # Update the repo data with only valid tests
+                filtered_repo_data = repo_data.copy()
+                filtered_repo_data["tests"] = valid_tests
+                filtered_repositories_data.append(filtered_repo_data)
+                logger.info(f"Repository {repo_identifier}: Kept {len(valid_tests)} out of {len(tests)} test files with tested_files information")
+            else:
+                logger.info(f"Repository {repo_identifier}: Skipped - no test files with tested_files information")
+        
+        # Update repositories_data with filtered data
+        skipped_count = len(repositories_data) - len(filtered_repositories_data)
+        logger.info(f"Filtered out {skipped_count} repositories with no valid test files")
+        repositories_data = filtered_repositories_data
+        
+        if not repositories_data:
+            logger.info("No repositories with valid test files (containing tested_files information) found")
+            return 0
+    
     # Convert repository data to paths for run_tests_parallel
     repositories = []
     repo_test_info = {}  # Store test info by repository path for later use
@@ -2776,8 +2794,6 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
             # For local paths, we need to check if they exist
             repo_path = Path(repo_identifier)
             if repo_path.exists():
-                repositories.append(repo_path)
-                # Store test info for this repo to use later
                 tests_info = repo_data.get("tests", [])
                 if tests_info:
                     # Validate test file paths
@@ -2791,6 +2807,11 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
                             # Get tested_files field
                             tested_files = processed_test_info.get("tested_files", [])
                             
+                            # Skip test files without tested_files if require_tested_files is enabled
+                            if args.require_tested_files and not tested_files:
+                                logger.debug(f"Skipping test file without tested_files: {test_path}")
+                                continue
+                            
                             # Check if the test file exists
                             full_path = repo_path / test_path
                             if full_path.exists():
@@ -2802,6 +2823,8 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
                             logger.warning(f"Test info missing path in repository {repo_identifier}")
                     
                     if valid_test_files:
+                        # Only add repository if it has valid test files after filtering
+                        repositories.append(repo_path)
                         repo_test_info[str(repo_path)] = valid_test_files
                         logger.info(f"Found {len(valid_test_files)} valid test files for repository {repo_identifier}")
                     else:
@@ -2822,582 +2845,182 @@ def run_tests_from_jsonl(args: argparse.Namespace) -> int:
     
     # Run tests in parallel using run_tests_parallel
     test_results = run_tests_parallel(repositories, output_dir, unified_venv, args, repo_test_info)
-
+    
     # Process the results to include test file details and tested files
     enhanced_results = []
     
     for result in test_results:
-        repo_id = result.get("repository", "")
-        test_details = result.get("tests", {}).get("details", [])
+        # Skip processing if this was a timeout or error result
+        if result.get("status") == "error" and "timeout" in result.get("error", "").lower():
+            # Just add the timeout result directly
+            enhanced_results.append(result)
+            continue
         
-        logger.info(f"Processing results for repository: {repo_id}")
+        # Create a mapping of test files and their tests
+        test_file_mapping = {}
+        repo_path = result['repository']
         
-        # Check if individual tests exist in tests.details[0].tests (as in the example)
-        individual_tests_from_details = []
-        for detail in test_details:
-            if detail.get("tests"):
-                file_path = detail.get("name", "")
-                for test in detail.get("tests", []):
-                    # Create an individual test entry with file_path
-                    individual_test = {
-                        "file_path": file_path,
-                        "name": test.get("name", ""),
-                        "classname": test.get("classname", ""),
-                        "status": test.get("status", ""),
-                        "message": test.get("message", "")
-                    }
-                    individual_tests_from_details.append(individual_test)
-        
-        # If individual_tests is empty but we found tests in details, use those instead
-        if not result.get("individual_tests") and individual_tests_from_details:
-            result["individual_tests"] = individual_tests_from_details
-            logger.info(f"Found {len(individual_tests_from_details)} individual tests in test details")
-            
-        # Try to identify tested files if not already present
-        # Extract imported modules from test files based on the classnames
-        identified_imports = {}
-        if result.get("test_files"):
-            for test_file in result.get("test_files"):
-                file_path = test_file.get("path", "")
-                # Skip if we already have tested_files information
-                if test_file.get("tested_files") and len(test_file.get("tested_files")) > 0:
-                    continue
-                    
-                # If there are tests associated with this file, use classnames to determine imports
-                all_tests = []
-                if "tests" in test_file and test_file["tests"]:
-                    all_tests.extend(test_file["tests"])
-                elif detail.get("tests"):
-                    all_tests.extend(detail.get("tests", []))
-                elif result.get("individual_tests"):
-                    # Filter individual tests by file_path
-                    basename = os.path.basename(file_path)
-                    all_tests.extend([
-                        t for t in result.get("individual_tests", [])
-                        if os.path.basename(t.get("file_path", "")) == basename
-                    ])
-                
-                # Extract module names from classnames
-                imported_modules = set()
-                for test in all_tests:
-                    classname = test.get("classname", "")
-                    # Try to extract module name from classname
-                    if classname and '.' in classname:
-                        module_parts = classname.split('.')
-                        if len(module_parts) >= 2:
-                            # The first part is likely the directory/module
-                            if file_path != "pytest":  # Skip for generic pytest entries
-                                imported_modules.add(module_parts[0])
-                
-                if imported_modules:
-                    identified_imports[file_path] = list(imported_modules)
-                    logger.info(f"Identified imports for {file_path}: {imported_modules}")
-        
-        # Create enhanced result with only the necessary information
-        enhanced_result = {
-            "repository": repo_id,
-            "status": result.get("status", "unknown"),
-            "test_files": [],
-            "total_summary": {
-                "total_files": 0,
-                "passed_files": 0,
-                "partial_files": 0,
-                "failed_files": 0,
-                "passed_tests": result.get("tests", {}).get("passed", 0),
-                "failed_tests": result.get("tests", {}).get("failed", 0),
-                "skipped_tests": result.get("tests", {}).get("skipped", 0)
+        # Get test file info from repo_test_info if available
+        repo_test_files = repo_test_info.get(repo_path, [])
+        test_file_to_tested_files = {
+            test_info['path']: {
+                'path': test_info['path'],
+                'tested_files': test_info.get('tested_files', []),
+                'status': 'skipped',  # Default all files to skipped initially
+                'tests': [],
+                'summary': {'passed_tests': 0, 'failed_tests': 0, 'skipped_tests': 0}
             }
+            for test_info in repo_test_files
         }
         
-        # Get original test info from repository data
-        test_infos = repo_test_info.get(repo_id, [])
+        # Get all tests from the pytest details
+        all_tests = []
+        for detail in result['tests']['details']:
+            if detail['name'] == 'pytest':
+                all_tests = detail['tests']
+                break
         
-        if not test_infos:
-            logger.warning(f"No test information found for repository {repo_id}")
+        # If no tests were run and status is skipped, just add all files as skipped
+        if result['status'] == 'skipped' and not all_tests:
+            test_file_mapping = test_file_to_tested_files
         else:
-            logger.info(f"Found {len(test_infos)} test files in test.jsonl for repository {repo_id}")
-            
-        # Create a dict to easily look up the test info by path
-        test_info_by_path = {}
-        for test_info in test_infos:
-            path = test_info.get("path", "")
-            if path:
-                # Get tested_files information
-                tested_files = test_info.get("tested_files", [])
+            # Group tests by their test files
+            for test in all_tests:
+                # Try to match test to original file path
+                test_file = None
+                test_module = None
                 
-                # Create a complete test info
-                complete_test_info = test_info.copy()
+                # First try to extract from classname
+                if test['classname']:
+                    parts = test['classname'].split('.')
+                    if len(parts) >= 2:
+                        test_module = '/'.join(parts[:-1])
+                        potential_path = f"{test_module}.py"
+                        if any(info['path'].endswith(potential_path) for info in repo_test_files):
+                            test_file = next(info['path'] for info in repo_test_files if info['path'].endswith(potential_path))
                 
-                test_info_by_path[path] = complete_test_info
-                # Don't add basename as a separate entry - we'll handle path normalization later
-                # Instead, simply store a mapping from basename to full path for lookup
-                basename = os.path.basename(path)
-                if basename != path:  # Only store if they're different
-                    # Create a mapping instead of duplicating the entry
-                    test_info_by_path.setdefault("__basename_to_path__", {})[basename] = path
-        
-        # Check if we have test details
-        if not test_details and result.get("status") != "skip":
-            logger.warning(f"No test details found for repository {repo_id} but status is not 'skip'")
-            
-        # Group test results by test file - first try to identify which tests passed/failed
-        test_files_status = {}  # Track status for each test file
-        test_output = ""  # Collect all output for search purposes
-        
-        # Extract test output from all details
-        for detail in test_details:
-            output = detail.get("message", "")
-            test_output += output + "\n"
-        
-        # Check if this is a skip result (no tests)
-        if result.get("status") == "skip":
-            logger.info(f"Repository {repo_id} was skipped (no tests found)")
-            
-            # Track normalized paths to avoid duplicates
-            normalized_test_files = {}
-            
-            # Include all test files from original data as "skip"
-            for test_info in test_infos:
-                test_path = test_info.get("path", "")
-                if test_path:
-                    # Get tested files
-                    tested_files = test_info.get("tested_files", [])
-                    
-                    # Get tests if available
-                    tests = test_info.get("tests", [])
-                    
-                    # Normalize using basename
-                    basename = os.path.basename(test_path)
-                    if basename in normalized_test_files:
-                        # Already have an entry with this basename, prefer shorter paths
-                        existing_path = normalized_test_files[basename]["path"]
-                        if len(test_path) < len(existing_path):
-                            normalized_test_files[basename] = {
-                                "path": test_path,
-                                "status": "skip",
-                                "tested_files": tested_files,
-                                "tests": test_info.get("tests", [])
-                            }
-                    else:
-                        normalized_test_files[basename] = {
-                            "path": test_path,
-                            "status": "skip",
-                            "tested_files": tested_files,
-                            "tests": test_info.get("tests", [])
-                        }
-        
-        # First pass: Try to extract file-specific status from the pytest output
-        for test_path in test_info_by_path.keys():
-            # Skip special mapping key
-            if test_path == "__basename_to_path__":
-                continue
-            
-            # Look for explicit pass/fail mentions with the test path
-            if f"{test_path} PASSED" in test_output:
-                test_files_status[test_path] = "success"
-            elif f"{test_path} FAILED" in test_output:
-                test_files_status[test_path] = "failure"
-            elif f"{test_path} ERROR" in test_output:
-                test_files_status[test_path] = "failure"
-            # Also try with basename (in case of relative paths)
-            elif f"{os.path.basename(test_path)} PASSED" in test_output:
-                test_files_status[test_path] = "success"
-            elif f"{os.path.basename(test_path)} FAILED" in test_output:
-                test_files_status[test_path] = "failure"
-            elif f"{os.path.basename(test_path)} ERROR" in test_output:
-                test_files_status[test_path] = "failure"
-        
-        # Second pass: If not found by name, look for the test function patterns
-        for test_path in test_info_by_path.keys():
-            if test_path not in test_files_status:
-                # Look for function tests from this file
-                basename = os.path.basename(test_path)
-                module_name = os.path.splitext(basename)[0]
+                # If no match from classname, try test name
+                if not test_file and test['name']:
+                    parts = test['name'].split('.')
+                    if len(parts) >= 2:
+                        test_module = '/'.join(parts[:-1])
+                        potential_paths = [
+                            f"{test_module}.py",
+                            f"{parts[0]}/{parts[1]}.py",
+                            f"{parts[0]}/test_{parts[1]}.py"
+                        ]
+                        for path in potential_paths:
+                            if any(info['path'].endswith(path) for info in repo_test_files):
+                                test_file = next(info['path'] for info in repo_test_files if info['path'].endswith(path))
+                                break
                 
-                # Check for patterns like test_module.py::test_function PASSED/FAILED
-                if re.search(f"{module_name}.*::.*PASSED", test_output):
-                    test_files_status[test_path] = "success"
-                elif re.search(f"{module_name}.*::.*FAILED", test_output):
-                    if test_path in test_files_status and test_files_status[test_path] == "success":
-                        # There are both passing and failing tests in this file
-                        test_files_status[test_path] = "partial_success"
-                    else:
-                        test_files_status[test_path] = "failure"
-        
-        # Final pass: If still not found, use the overall repository status
-        overall_status = result.get("status", "unknown")
-        for test_path, test_info in test_info_by_path.items():
-            if test_path not in test_files_status:
-                # Default to overall repository status
-                test_files_status[test_path] = overall_status
-        
-        # Build a normalized path map to prevent duplicates (preferring relative paths)
-        normalized_test_files = {}  # Maps normalized path to {path, status, tested_files}
-        
-        # First process test files from test_files_status to avoid duplicates
-        for test_path, status in test_files_status.items():
-            # Skip our special mapping dictionary
-            if test_path == "__basename_to_path__":
-                continue
-                
-            test_info = test_info_by_path.get(test_path)
-            if not test_info:
-                continue
-            
-            # Get the tested files from the test info
-            tested_files = test_info.get("tested_files", [])
-            
-            # Normalize the path - prefer shorter/relative paths
-            basename = os.path.basename(test_path)
-            if basename in normalized_test_files:
-                # We already have an entry for this test file (likely with a different path)
-                existing_path = normalized_test_files[basename]["path"]
-                # If the existing path is longer, replace it with this one
-                if len(test_path) < len(existing_path):
-                    normalized_test_files[basename] = {
-                        "path": test_path,
-                        "status": status,
-                        "tested_files": tested_files,
-                        "tests": test_info.get("tests", [])
-                    }
-            else:
-                # First time seeing this test file
-                normalized_test_files[basename] = {
-                    "path": test_path,
-                    "status": status,
-                    "tested_files": tested_files,
-                    "tests": test_info.get("tests", [])
-                }
-                
-                # Add summary field with test counts
-                tests = test_info.get("tests", [])
-                normalized_test_files[basename]["summary"] = {
-                    "passed_tests": sum(1 for t in tests if t.get("status") == "passed"),
-                    "failed_tests": sum(1 for t in tests if t.get("status") in ["failure", "error"]),
-                    "skipped_tests": sum(1 for t in tests if t.get("status") == "skipped")
-                }
-        
-        # Now add all the normalized test files to the result
-        for test_file_info in normalized_test_files.values():
-            # Check if we have identified imports for this file
-            file_path = test_file_info.get("path", "")
-            if file_path in identified_imports and not test_file_info.get("tested_files"):
-                # Convert module names to file paths
-                modules = identified_imports[file_path]
-                tested_files = []
-                
-                # Try to find the corresponding file paths
-                for module in modules:
-                    # Check for files with this module name
-                    possible_files = [
-                        os.path.join(os.path.dirname(file_path), f"{module}.py"),
-                        os.path.join(os.path.dirname(file_path), module, "__init__.py"),
-                        f"{module}.py"
-                    ]
-                    
-                    for possible_file in possible_files:
-                        if possible_file in test_info_by_path:
-                            tested_files.append(possible_file)
+                # If still no match, try direct path matching
+                if not test_file:
+                    for info in repo_test_files:
+                        file_name = info['path'].split('/')[-1]
+                        if (test['name'] in file_name or 
+                            (test['classname'] and test['classname'].split('.')[-1] in file_name)):
+                            test_file = info['path']
                             break
                 
-                if tested_files:
-                    test_file_info["tested_files"] = list(set(tested_files))
-                    logger.info(f"Added tested_files to {file_path}: {tested_files}")
-            
-            # Get test lists from result data if available
-            if "individual_tests" in result and result["individual_tests"]:
-                basename = os.path.basename(test_file_info["path"])
-                matching_tests = [
-                    t for t in result.get("individual_tests", [])
-                    if os.path.basename(t.get("file_path", "")) == basename
-                ]
-                
-                # If no matches found by basename, try matching by name if it's pytest
-                if not matching_tests and test_file_info["path"] == "pytest":
-                    matching_tests = result.get("individual_tests", [])
-                
-                # Convert individual tests to test objects
-                if matching_tests:
-                    test_file_info["tests"] = [
-                        {
-                            "name": t.get("name", ""),
-                            "classname": t.get("classname", ""),
-                            "status": t.get("status", ""),
-                            "message": t.get("message", "")
-                        } for t in matching_tests
-                    ]
+                # If we found a matching file, add the test to it
+                if test_file:
+                    if test_file not in test_file_mapping:
+                        test_file_mapping[test_file] = test_file_to_tested_files.get(test_file, {
+                            'path': test_file,
+                            'tested_files': [],
+                            'status': 'success',  # Only set to success when we have tests
+                            'tests': [],
+                            'summary': {'passed_tests': 0, 'failed_tests': 0, 'skipped_tests': 0}
+                        })
                     
-                    # Update the summary field with test counts
-                    test_file_info["summary"] = {
-                        "passed_tests": sum(1 for t in test_file_info["tests"] if t.get("status") == "passed"),
-                        "failed_tests": sum(1 for t in test_file_info["tests"] if t.get("status") in ["failure", "error"]),
-                        "skipped_tests": sum(1 for t in test_file_info["tests"] if t.get("status") == "skipped")
-                    }
+                    # Add test to the file's tests
+                    test_file_mapping[test_file]['tests'].append(test)
                     
-                    logger.debug(f"Updated tests for {basename}: {len(test_file_info['tests'])} total tests")
-            else:
-                # Ensure the summary field exists even without individual tests
-                tests = test_file_info.get("tests", [])
-                test_file_info["summary"] = {
-                    "passed_tests": sum(1 for t in tests if t.get("status") == "passed"),
-                    "failed_tests": sum(1 for t in tests if t.get("status") in ["failure", "error"]),
-                    "skipped_tests": sum(1 for t in tests if t.get("status") == "skipped")
-                }
-            
-            # Add test file details to the enhanced result
-            enhanced_result["test_files"].append(test_file_info)
-            
-            # Update summary counts
-            enhanced_result["total_summary"]["total_files"] += 1
-            status = test_file_info["status"]
-            if status == "success":
-                enhanced_result["total_summary"]["passed_files"] += 1
-            elif status == "partial_success":
-                enhanced_result["total_summary"]["partial_files"] += 1
-            elif status == "failure":
-                enhanced_result["total_summary"]["failed_files"] += 1
-        
-        # Check for test files from original data that weren't included
-        test_paths_seen = {os.path.basename(tf["path"]) for tf in enhanced_result["test_files"]}
-        
-        # Special handling for "pytest" test files in result data
-        # We need to track if we've added a pytest entry to avoid duplicates
-        has_added_pytest_entry = "pytest" in test_paths_seen
-        
-        for i, test_file in enumerate(result.get("test_files", [])):
-            if test_file.get("path") == "pytest":
-                # Skip if we've already processed a pytest entry
-                if has_added_pytest_entry:
-                    logger.info("Skipping duplicate pytest entry")
-                    continue
-                
-                # Copy the test_file to avoid modifying the original
-                pytest_entry = test_file.copy()
-                
-                # If the tests array is empty but we have tests in details, copy them over
-                if not pytest_entry.get("tests") and test_details:
-                    for detail in test_details:
-                        if detail.get("tests") and detail.get("name") == "pytest":
-                            # Found tests in the matching detail, use those
-                            pytest_entry["tests"] = detail.get("tests", [])
-                            logger.info(f"Copied {len(pytest_entry['tests'])} tests from detail to pytest entry")
-                            break
-                
-                # If tests are still empty but individual_tests exists, use those
-                if not pytest_entry.get("tests") and result.get("individual_tests"):
-                    pytest_entry["tests"] = [
-                        {
-                            "name": t.get("name", ""),
-                            "classname": t.get("classname", ""),
-                            "status": t.get("status", ""),
-                            "message": t.get("message", "")
-                        } for t in result.get("individual_tests", [])
-                    ]
-                    logger.info(f"Copied {len(pytest_entry['tests'])} tests from individual_tests to pytest entry")
-                
-                # Always add the pytest entry if it has tests
-                if pytest_entry.get("tests"):
-                    # Calculate summary for this file
-                    tests = pytest_entry.get("tests", [])
-                    if "summary" not in pytest_entry:
-                        pytest_entry["summary"] = {
-                            "passed_tests": sum(1 for t in tests if t.get("status") == "passed"),
-                            "failed_tests": sum(1 for t in tests if t.get("status") in ["failure", "error"]),
-                            "skipped_tests": sum(1 for t in tests if t.get("status") == "skipped")
-                        }
-                    
-                    # Add it to the enhanced result
-                    enhanced_result["test_files"].append(pytest_entry)
-                    
-                    # Update summary counts
-                    enhanced_result["total_summary"]["total_files"] += 1
-                    status = pytest_entry.get("status", "")
-                    if status == "success":
-                        enhanced_result["total_summary"]["passed_files"] += 1
-                    elif status == "partial_success":
-                        enhanced_result["total_summary"]["partial_files"] += 1
-                    elif status == "failure":
-                        enhanced_result["total_summary"]["failed_files"] += 1
-                        
-                    logger.info(f"Added pytest entry with {len(tests)} tests")
-                    
-                    # Mark as seen and processed
-                    test_paths_seen.add("pytest")
-                    has_added_pytest_entry = True
-        
-        # If we still don't have a pytest entry but we have tests in details, create one
-        if not has_added_pytest_entry and test_details:
-            for detail in test_details:
-                if detail.get("tests") and (detail.get("name") == "pytest" or detail.get("status") == "success"):
-                    # Create a new pytest entry
-                    pytest_entry = {
-                        "path": "pytest",
-                        "status": detail.get("status", result.get("status", "unknown")),
-                        "tested_files": [],
-                        "tests": detail.get("tests", [])
-                    }
-                    
-                    # Calculate summary for this file
-                    tests = pytest_entry.get("tests", [])
-                    pytest_entry["summary"] = {
-                        "passed_tests": sum(1 for t in tests if t.get("status") == "passed"),
-                        "failed_tests": sum(1 for t in tests if t.get("status") in ["failure", "error"]),
-                        "skipped_tests": sum(1 for t in tests if t.get("status") == "skipped")
-                    }
-                    
-                    # Add it to the enhanced result
-                    enhanced_result["test_files"].append(pytest_entry)
-                    
-                    # Update summary counts
-                    enhanced_result["total_summary"]["total_files"] += 1
-                    status = pytest_entry.get("status", "")
-                    if status == "success":
-                        enhanced_result["total_summary"]["passed_files"] += 1
-                    elif status == "partial_success":
-                        enhanced_result["total_summary"]["partial_files"] += 1
-                    elif status == "failure":
-                        enhanced_result["total_summary"]["failed_files"] += 1
-                        
-                    logger.info(f"Created new pytest entry with {len(tests)} tests from detail")
-                    
-                    # Mark as seen
-                    test_paths_seen.add("pytest")
-                    has_added_pytest_entry = True
-                    break
-        
-        # Try to extract additional tested_files information by examining the actual test files
-        # This is especially important for cases like "from day1 import whichLevel"
-        try:
-            repo_path = None
-            if isinstance(repo_id, str):
-                # For local repositories, it might be a direct path
-                if os.path.exists(repo_id):
-                    repo_path = Path(repo_id)
+                    # Update summary based on test status
+                    if test['status'] == 'passed':
+                        test_file_mapping[test_file]['summary']['passed_tests'] += 1
+                    elif test['status'] in ['failure', 'error']:
+                        test_file_mapping[test_file]['summary']['failed_tests'] += 1
+                    elif test['status'] == 'skipped':
+                        test_file_mapping[test_file]['summary']['skipped_tests'] += 1
                 else:
-                    # For GitHub repos, try to find it in the workspace_dir 
-                    # (if this info was passed to the function)
-                    repo_id_parts = repo_id.split('@')
-                    if len(repo_id_parts) == 2 and hasattr(args, 'workspace_dir') and args.workspace_dir:
-                        repo_name = repo_id_parts[0].replace('/', '_')
-                        repo_sha = repo_id_parts[1]
-                        possible_path = Path(args.workspace_dir) / repo_name / repo_sha
-                        if os.path.exists(possible_path):
-                            repo_path = possible_path
+                    # If we couldn't match to a file, create a fallback entry
+                    fallback_path = f"{test_module}.py" if test_module else "unknown_test.py"
+                    if fallback_path not in test_file_mapping:
+                        test_file_mapping[fallback_path] = {
+                            'path': fallback_path,
+                            'tested_files': [],
+                            'status': 'success',
+                            'tests': [],
+                            'summary': {'passed_tests': 0, 'failed_tests': 0, 'skipped_tests': 0}
+                        }
+                    test_file_mapping[fallback_path]['tests'].append(test)
+        
+        # Add any test files that didn't have any tests run
+        for test_info in repo_test_files:
+            if test_info['path'] not in test_file_mapping:
+                test_file_mapping[test_info['path']] = {
+                    'path': test_info['path'],
+                    'tested_files': test_info.get('tested_files', []),
+                    'status': 'skipped',
+                    'tests': [],
+                    'summary': {'passed_tests': 0, 'failed_tests': 0, 'skipped_tests': 0}
+                }
+        
+        # Recalculate status for each test file based on its test results
+        for test_file in test_file_mapping.values():
+            passed_count = test_file['summary']['passed_tests']
+            failed_count = test_file['summary']['failed_tests']
+            skipped_count = test_file['summary']['skipped_tests']
+            total_tests = passed_count + failed_count + skipped_count
             
-            if repo_path:
-                # Process each test file
-                for test_file_info in enhanced_result["test_files"]:
-                    # Skip if we already have tested_files information
-                    if test_file_info.get("tested_files") and len(test_file_info.get("tested_files")) > 0:
-                        continue
-                    
-                    file_path = test_file_info.get("path")
-                    # Skip pytest entries and non-Python files
-                    if file_path == "pytest" or not file_path.endswith('.py'):
-                        continue
-                    
-                    # Try to find the actual file in the repository
-                    test_file_path = repo_path / file_path
-                    if not test_file_path.exists():
-                        # Try with just the basename
-                        basename = os.path.basename(file_path)
-                        # Use glob to find it
-                        matching_files = list(repo_path.glob(f"**/{basename}"))
-                        if matching_files:
-                            test_file_path = matching_files[0]
-                        else:
-                            continue  # Can't find the file
-                    
-                    logger.info(f"Analyzing test file: {test_file_path}")
-                    
-                    # Read the file to extract imports
-                    try:
-                        with open(test_file_path, 'r', encoding='utf-8') as f:
-                            content = f.read()
-                        
-                        # Look for import statements like "from day1 import whichLevel"
-                        import_matches = re.findall(r'from\s+([a-zA-Z0-9_\.]+)\s+import\s+', content)
-                        
-                        if import_matches:
-                            # Convert to potential file paths
-                            tested_files = []
-                            for module in import_matches:
-                                # Exclude standard library imports
-                                if module in ['unittest', 'nose', 'pytest', 'sys', 'os', 'datetime']:
-                                    continue
-                                
-                                # Check for different possible file paths
-                                dir_path = os.path.dirname(test_file_path)
-                                possible_files = [
-                                    os.path.join(dir_path, f"{module}.py"),
-                                    os.path.join(dir_path, module, "__init__.py"),
-                                    f"{module}.py"
-                                ]
-                                
-                                for possible_file in possible_files:
-                                    rel_path = os.path.relpath(possible_file, repo_path)
-                                    if os.path.exists(possible_file):
-                                        tested_files.append(rel_path)
-                                        break
-                            
-                            if tested_files:
-                                test_file_info["tested_files"] = list(set(tested_files))
-                                logger.info(f"Added tested_files to {file_path} from imports: {tested_files}")
-                    except Exception as e:
-                        logger.warning(f"Error analyzing test file {test_file_path}: {str(e)}")
-        except Exception as e:
-            logger.warning(f"Error extracting tested_files information: {str(e)}")
-                
-        for test_info in test_infos:
-            test_path = test_info.get("path", "")
-            print(test_path)
-            if not test_path:
-                continue
-                
-            basename = os.path.basename(test_path)
-            if basename not in test_paths_seen:
-                # Get tested files, prioritizing tested_files over imports if both exist
-                tested_files = test_info.get("tested_files", [])
-                if not tested_files:
-                    # Fallback to imports field if tested_files is empty
-                    tested_files = test_info.get("imports", [])
-                
-                # Get tests if available
-                tests = test_info.get("tests", [])
-                # Add with default status
-                enhanced_result["test_files"].append({
-                    "path": test_path,
-                    "status": overall_status,
-                    "tested_files": tested_files,
-                    "tests": tests,
-                    "summary": {
-                        "passed_tests": sum(1 for t in tests if t.get("status") == "passed"),
-                        "failed_tests": sum(1 for t in tests if t.get("status") in ["failure", "error"]),
-                        "skipped_tests": sum(1 for t in tests if t.get("status") == "skipped")
-                    }
-                })
-                test_paths_seen.add(basename)
-                
-                # Update summary count
-                enhanced_result["total_summary"]["total_files"] += 1
-                if overall_status == "success":
-                    enhanced_result["total_summary"]["passed_files"] += 1
-                elif overall_status == "partial_success":
-                    enhanced_result["total_summary"]["partial_files"] += 1
-                elif overall_status == "failure":
-                    enhanced_result["total_summary"]["failed_files"] += 1
+            if total_tests == 0:
+                test_file['status'] = 'skipped'
+            elif failed_count > 0 and passed_count == 0:
+                test_file['status'] = 'failure'
+            elif failed_count > 0 and passed_count > 0:
+                test_file['status'] = 'partial_success'
+            elif passed_count > 0:
+                test_file['status'] = 'success'
+            else:
+                test_file['status'] = 'skipped'
+            
+            logger.debug(f"Test file {test_file['path']}: {passed_count} passed, {failed_count} failed, {skipped_count} skipped -> {test_file['status']}")
         
-        # Add execution time
-        enhanced_result["execution_time"] = result.get("execution", {}).get("elapsed_time", 0)
+        # Calculate total summary
+        total_summary = {
+            'total_files': len(test_file_mapping),
+            'passed_files': sum(1 for f in test_file_mapping.values() if f['status'] == 'success'),
+            'partial_files': sum(1 for f in test_file_mapping.values() if f['status'] == 'partial_success'),
+            'failed_files': sum(1 for f in test_file_mapping.values() if f['status'] == 'failure'),
+            'passed_tests': sum(f['summary']['passed_tests'] for f in test_file_mapping.values()),
+            'failed_tests': sum(f['summary']['failed_tests'] for f in test_file_mapping.values()),
+            'skipped_tests': sum(f['summary']['skipped_tests'] for f in test_file_mapping.values())
+        }
         
-        # Log summary info
-        logger.info(f"Repository {repo_id}: {len(enhanced_result['test_files'])} test files, " +
-                   f"{enhanced_result['total_summary']['passed_files']} passed, " +
-                   f"{enhanced_result['total_summary']['partial_files']} partial, " +
-                   f"{enhanced_result['total_summary']['failed_files']} failed")
+        # Create enhanced result
+        enhanced_result = {
+            'repository': result['repository'],
+            'status': result['status'],
+            'test_files': list(test_file_mapping.values()),
+            'total_summary': total_summary,
+            'execution_time': result['execution']['elapsed_time']
+        }
         
-        # Append to enhanced results
+        # Update overall repository status based on test file statuses
+        if all(f['status'] == 'success' for f in test_file_mapping.values()):
+            enhanced_result['status'] = 'success'
+        elif all(f['status'] == 'skipped' for f in test_file_mapping.values()):
+            enhanced_result['status'] = 'skip'
+        elif any(f['status'] in ['success', 'partial_success'] for f in test_file_mapping.values()):
+            enhanced_result['status'] = 'partial_success'
+        else:
+            enhanced_result['status'] = 'failure'
+        
         enhanced_results.append(enhanced_result)
+        
+        # Write the enhanced result to the output file
         with open(test_results_jsonl_path, "a") as f:
             f.write(json.dumps(enhanced_result) + "\n")
     
