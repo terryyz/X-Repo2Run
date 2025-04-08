@@ -1299,153 +1299,30 @@ class TestRunner:
                 sys.path.remove(str(self.repo_path))
 
     def _parse_test_results(self, stdout, stderr):
-        """
-        Parse test results from stdout and stderr.
-        
-        Args:
-            stdout (str): Standard output from the test command.
-            stderr (str): Standard error output from the test command.
-        
-        Returns:
-            tuple: Tuple containing tests_found, tests_passed, tests_failed, tests_skipped, and test_results.
-        """
-        # Extract test summary
+        """Parse test results from stdout and stderr."""
         tests_found = 0
         tests_passed = 0
         tests_failed = 0
         tests_skipped = 0
-        
-        # Flag to track if all tests were skipped
-        all_tests_skipped = False
-        
-        # Flag to track if there were collection errors
-        collection_errors = False
-        
-        # Flag to track if we've successfully parsed the summary
-        summary_parsed = False
-        
-        # Check for collection errors - these should be treated as skipped, not failed
-        if "ImportError" in stdout or "ImportError" in stderr:
-            collection_errors = True
-            self.logger.warning("Import errors detected - some tests may be marked as skipped")
-        
-        if "ModuleNotFoundError" in stdout or "ModuleNotFoundError" in stderr:
-            collection_errors = True
-            self.logger.warning("Module not found errors detected - some tests may be marked as skipped")
-        
-        # Check for collection errors in pytest output
-        for line in stdout.splitlines() + stderr.splitlines():
-            if "error in collection" in line.lower() or "error collecting" in line.lower():
-                collection_errors = True
-                self.logger.warning("Collection errors detected - some tests may be marked as skipped")
-                break
-        
-        # Try to parse the test summary using regex
-        summary_pattern = re.compile(r"=+\s*(\d+)\s+passed[,\s]+(\d+)\s+skipped[,\s]+(\d+)\s+failed")
-        for line in stdout.splitlines():
-            summary_match = summary_pattern.search(line)
-            if summary_match:
-                tests_passed = int(summary_match.group(1))
-                tests_skipped = int(summary_match.group(2))
-                tests_failed = int(summary_match.group(3))
-                tests_found = tests_passed + tests_skipped + tests_failed
-                summary_parsed = True
-                break
-        
-        # Also try an alternative pattern (pytest can have different output formats)
-        if not summary_parsed:
-            alt_pattern = re.compile(r"=+\s+(\d+)\s+passed,?\s*(\d+)\s+skipped,?\s*(\d+)\s+failed")
-            for line in stdout.splitlines():
-                match = alt_pattern.search(line)
-                if match:
-                    tests_passed = int(match.group(1))
-                    tests_skipped = int(match.group(2))
-                    tests_failed = int(match.group(3))
-                    tests_found = tests_passed + tests_skipped + tests_failed
-                    summary_parsed = True
-                    break
-                
-            # Try a pattern for just failures (common in the output)
-            if not summary_parsed:
-                failure_pattern = re.compile(r"=+\s+(\d+)\s+failed")
-                for line in stdout.splitlines():
-                    match = failure_pattern.search(line)
-                    if match:
-                        tests_failed = int(match.group(1))
-                        tests_found = tests_failed  # Initially set to failed count
-                        summary_parsed = True
-                        break
-        
-        # If we couldn't parse the summary, try to count the tests
-        if tests_found == 0:
-            # Try to parse collection statistics if present
-            collection_pattern = re.compile(r"collected\s+(\d+)\s+items")
-            for line in stdout.splitlines():
-                match = collection_pattern.search(line)
-                if match:
-                    tests_found = int(match.group(1))
-                    break
-            
-            # If still no count, use test files
-            if tests_found == 0:
-                test_files = self.find_tests()
-                tests_found = len(test_files)
-                
-            # Check for various failure conditions
-            if stderr and ("error" in stderr.lower() or "exception" in stderr.lower()):
-                if collection_errors:
-                    # If we have collection errors, mark as skipped rather than failed
-                    tests_skipped = tests_found
-                    all_tests_skipped = True
-                    self.logger.warning("Collection errors detected - tests will be marked as skipped")
-                else:
-                    # Only mark as failed if we don't have collection errors
-                    tests_failed = tests_found
-            elif stdout and "no tests ran" in stdout.lower():
-                # No tests ran
-                tests_skipped = tests_found
-                all_tests_skipped = True
-                self.logger.warning("No tests ran - all tests will be marked as skipped")
-            elif "FAILURES" in stdout and not summary_parsed:
-                # Some tests failed but we couldn't parse summary
-                # Count failed tests by counting the "FAILED" lines
-                failed_count = 0
-                for line in stdout.splitlines():
-                    if "FAILED" in line or "ERROR" in line:
-                        failed_count += 1
-                
-                # Only use this count if we didn't get a count from summary parsing
-                if tests_failed == 0:
-                    tests_failed = failed_count
-            
-            # If no explicit values for passed/skipped, infer them
-            if tests_passed == 0 and tests_skipped == 0 and tests_failed == 0:
-                if collection_errors:
-                    # If we have collection errors but no explicit counts, mark all as skipped
-                    tests_skipped = tests_found
-                    all_tests_skipped = True
-                    self.logger.warning("Collection errors with no explicit counts - all tests will be marked as skipped")
-                else:
-                    # Default assumption: all tests passed if no failures detected and no collection errors
-                    tests_passed = tests_found
-            elif tests_passed == 0 and not all_tests_skipped:
-                # Calculate passed tests by subtraction
-                tests_passed = max(0, tests_found - tests_failed - tests_skipped)  # Ensure non-negative
-        
-        # If we detect a big discrepancy between the number of test files and executed tests,
-        # it likely means many tests were not collected
-        test_files = self.find_tests()
-        if tests_found > 0 and len(test_files) > 0 and tests_found < len(test_files) / 2:
-            self.logger.warning(f"Only {tests_found} tests executed out of {len(test_files)} test files, marking uncollected tests as skipped")
-            collection_errors = True
-        
-        # Parse individual test results
         test_results = []
-        
-        # Track test files and their test results more accurately
+        test_file_dict = {}
         file_to_tests = {}
-        
-        # First pass: capture all test files and initialize tracking
+        executed_tests = set()
+
+        # Track collection errors separately from execution failures
+        collection_errors = []
+        execution_errors = []
+
+        # First check for collection errors
+        for line in stderr.splitlines():
+            if "ImportError" in line or "ModuleNotFoundError" in line:
+                collection_errors.append(line)
+            elif "ERROR collecting" in line:
+                collection_errors.append(line)
+            elif "ERROR" in line and "during collection" in line:
+                collection_errors.append(line)
+
+        # Process stdout for test results
         for line in stdout.splitlines():
             # Look for pytest result lines that include file names
             if ' PASSED ' in line or ' FAILED ' in line or ' SKIPPED ' in line or ' ERROR ' in line:
@@ -1477,27 +1354,6 @@ class TestRunner:
                 except Exception as e:
                     self.logger.warning(f"Error parsing test result line: {line}, error: {str(e)}")
 
-        # Extract failures and match them to test files - only do detailed matching if we need to
-        # Build per-file results without affecting the overall counts that we already parsed
-        for line in stdout.splitlines():
-            for test_name in file_to_tests:
-                if test_name in line and ("FAILED" in line or "ERROR" in line):
-                    file_to_tests[test_name]["failed"].append(test_name)
-                    file_to_tests[test_name]["uncollected"] = False  # Test was collected if it has a FAILED status
-                    # Extract failure message (next few lines)
-                    message_start = stdout.find(line) + len(line)
-                    next_failure = stdout.find("FAILED", message_start)
-                    if next_failure == -1:
-                        next_failure = len(stdout)
-                    message = stdout[message_start:next_failure].strip()
-                    file_to_tests[test_name]["message"] = message
-                    break
-                elif test_name in line and "PASSED" in line:
-                    file_to_tests[test_name]["uncollected"] = False  # Test was collected if it has a PASSED status
-        
-        # Process the file_to_tests dict to create test results
-        test_results = []
-        
         # If we found test files through the more detailed tracking, use that
         if file_to_tests:
             self.logger.info(f"Found {len(file_to_tests)} test files with detailed results")
@@ -1566,8 +1422,10 @@ class TestRunner:
                 # Determine if this test file was actually executed
                 was_executed = any(test_name in executed for executed in executed_tests)
 
+                # Check if this file had collection errors
+                file_had_collection_errors = any(test_name in error for error in collection_errors)
+
                 # For each test file, track if it had passed and failed tests 
-                # to accurately determine partial_success status
                 has_passed_tests = False
                 has_failed_tests = False
                 for line in stdout.splitlines():
@@ -1578,7 +1436,14 @@ class TestRunner:
                             has_failed_tests = True
                 
                 # Assign status based on individual file results
-                if has_passed_tests and has_failed_tests:
+                if file_had_collection_errors:
+                    # File had collection errors - mark as failure
+                    result_entry.update({
+                        "status": "failure",
+                        "message": "Test collection failed - import or setup errors"
+                    })
+                    tests_failed += 1
+                elif has_passed_tests and has_failed_tests:
                     # File has both passed and failed tests - partial success
                     result_entry.update({
                         "status": "partial_success",
@@ -1599,11 +1464,11 @@ class TestRunner:
                         "status": "skipped",
                         "message": "Test was skipped - no tests ran"
                     })
-                elif info["uncollected"] and not was_executed:
-                    # This is the important change - mark as skipped rather than failed if it wasn't collected
+                elif info["uncollected"] and not was_executed and not file_had_collection_errors:
+                    # No tests could be collected but no errors - mark as skipped
                     result_entry.update({
                         "status": "skipped",
-                        "message": "Test was skipped - not collected due to import or setup errors"
+                        "message": "No test functions found in this file"
                     })
                 else:
                     result_entry.update({
@@ -1612,45 +1477,5 @@ class TestRunner:
                     })
                     
                 test_results.append(result_entry)
-        
-        # If no test results were created but we have test files, create minimal entries for them
-        if not test_results and len(test_files) > 0:
-            self.logger.warning("No test results found but test files exist. Creating minimal entries.")
-            for test_file in test_files:
-                rel_path = str(test_file.relative_to(self.repo_path)) if test_file.is_relative_to(self.repo_path) else str(test_file)
-                test_results.append({
-                    "name": rel_path,
-                    "status": "skipped" if tests_failed == 0 else "failure",
-                    "message": "No test results found for this file",
-                    "tested_files": []
-                })
-        
-        # If we somehow still have 0 test files but non-zero test counts, create at least one test file entry
-        if (not test_results or len(test_results) == 0) and (tests_passed > 0 or tests_failed > 0 or tests_skipped > 0):
-            self.logger.warning(f"Tests were run but no test files were identified. Creating a synthetic test file entry.")
-            test_results.append({
-                "name": "unknown_test_file.py",
-                "status": "partial_success" if tests_passed > 0 and tests_failed > 0 else 
-                          "success" if tests_passed > 0 else 
-                          "failure" if tests_failed > 0 else "skipped",
-                "message": f"Tests found={tests_found}, passed={tests_passed}, failed={tests_failed}, skipped={tests_skipped}",
-                "tested_files": []
-            })
-        
-        # Adjust counts based on our improved classification
-        if collection_errors and tests_found < len(test_files):
-            # Count how many tests we've now marked as skipped due to collection errors
-            additional_skipped = 0
-            for result in test_results:
-                if result["status"] == "skipped" and "not collected" in result.get("message", ""):
-                    additional_skipped += 1
-            
-            # Update the skipped count to include tests that weren't collected
-            tests_skipped += additional_skipped
-            
-            # Ensure total counts match
-            tests_found = tests_passed + tests_failed + tests_skipped
-        
-        self.logger.info(f"Parsed test results: found={tests_found}, passed={tests_passed}, failed={tests_failed}, skipped={tests_skipped}, files={len(test_results)}")
-        
+
         return tests_found, tests_passed, tests_failed, tests_skipped, test_results 
