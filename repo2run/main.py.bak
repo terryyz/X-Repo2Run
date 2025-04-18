@@ -25,7 +25,7 @@ Options:
     --local-list FILE      Text file containing list of local directories
     --output-dir DIR       Directory to store output files (default: output)
     --workspace-dir DIR    Directory to use as workspace (default: temporary directory)
-    --timeout SECONDS      Timeout in seconds (default: 7200 - 2 hours). Tests that exceed this time will be forcibly terminated.
+    --timeout SECONDS      Timeout in seconds (default: 1800 - 0.5 houra). Tests that exceed this time will be forcibly terminated.
     --verbose             Enable verbose logging
     --overwrite           Overwrite existing output directory if it exists
     --use-uv             Use UV for dependency management (default: False, use pip/venv)
@@ -106,8 +106,8 @@ def parse_arguments():
     parser.add_argument(
         '--timeout', 
         type=int, 
-        default=7200,
-        help='Timeout in seconds (default: 7200 - 2 hours). Tests that exceed this time will be forcibly terminated.'
+        default=1800,
+        help='Timeout in seconds (default: 1800 - 0.5 houra). Tests that exceed this time will be forcibly terminated.'
     )
     parser.add_argument(
         '--verbose', 

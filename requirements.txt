@@ -4375,7 +4375,7 @@ slixmpp
 implicit
 pygrib
 rainbow_logging_handler
-pyModbusTCP
+pyModBusTCP
 pydl
 drmaa
 djangorestframework-bulk
@@ -5029,3 +5029,4 @@ preggy
 sep
 PyUtilib
 certbot
+psutil>=5.9.0

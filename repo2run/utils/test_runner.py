@@ -957,6 +957,9 @@ class TestRunner:
             # Prepare pytest arguments
             pytest_args = [
                 "-v",
+                "--noconftest",
+                "-o",
+                "addopts=''"
                 "--continue-on-collection-errors",
                 f"--junitxml={xml_path}"
             ]
@@ -999,6 +1002,8 @@ class TestRunner:
                 if self.timeout and 'timer' in locals():
                     timer.cancel()
             
+            self.logger.info(f"Pytest stdout: {stdout}")
+            self.logger.info(f"Pytest stderr: {stderr}")
             self.logger.info(f"Pytest exit code: {exit_code}")
             
             # Store raw output
