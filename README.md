@@ -11,6 +11,11 @@ A robust tool to configure and run repositories with automated dependency manage
 - Find and run tests automatically
 - Generate detailed reports
 - Preserves original repository structure
+- Support for parallel processing of multiple repositories
+- Unified pipeline mode for efficient batch processing
+- Test extraction and execution modes
+- Skip already processed repositories
+- Configurable timeouts and resource management
 
 ## Installation
 
@@ -27,16 +32,27 @@ pip install -e .
 
 ### Command Line Interface
 
-#### Comprehensive Usage Options
+#### Basic Usage
 
 ```bash
-# Basic repository processing
+# Single repository mode
 repo2run --repo username/repo commit-sha [OPTIONS]
 repo2run --local /path/to/local/repo [OPTIONS]
 
-# Batch processing
+# Batch processing mode
 repo2run --repo-list repos.txt [OPTIONS]
 repo2run --local-list dirs.txt [OPTIONS]
+
+# Test extraction mode
+repo2run --repo username/repo commit-sha --extract-tests [OPTIONS]
+repo2run --local /path/to/local/repo --extract-tests [OPTIONS]
+
+# Run tests from extracted tests
+repo2run --output-dir output_path --run-tests [OPTIONS]
+
+# Global unified pipeline mode
+repo2run --global --repo-list repos.txt [OPTIONS]
+repo2run --global --local-list dirs.txt [OPTIONS]
 ```
 
 #### Argument Reference
@@ -47,48 +63,20 @@ repo2run --local-list dirs.txt [OPTIONS]
 | `--local PATH` | Process a local repository | None | `--local /home/user/projects/myrepo` |
 | `--repo-list FILE` | Process multiple repositories from a list file | None | `--repo-list repos.txt` |
 | `--local-list FILE` | Process multiple local repositories from a list file | None | `--local-list local_repos.txt` |
+| `--global` | Use the unified global pipeline | Disabled | `--global` |
 | `--output-dir DIR` | Directory to store output files | `output` | `--output-dir ./results` |
 | `--workspace-dir DIR` | Directory to use as workspace | Temporary directory | `--workspace-dir ./workspace` |
-| `--timeout SECONDS` | Maximum execution time | 7200 (2 hours) | `--timeout 3600` |
+| `--timeout SECONDS` | Maximum execution time | 1800 (0.5 hours) | `--timeout 3600` |
 | `--verbose` | Enable detailed logging | Disabled | `--verbose` |
 | `--overwrite` | Overwrite existing output directory | Disabled | `--overwrite` |
 | `--use-uv` | Use UV for dependency management | Disabled (uses pip/venv) | `--use-uv` |
 | `--num-workers N` | Number of parallel processing workers | Number of CPU cores | `--num-workers 4` |
+| `--max-workers N` | Number of worker threads for global mode | 4 | `--max-workers 8` |
+| `--repo-range START END` | Process only a range of repositories | None (all repos) | `--repo-range 0 100` |
 | `--collect-only` | Only collect test cases without running | Disabled | `--collect-only` |
-
-#### Detailed Usage Examples
-
-```bash
-# 1. Process a GitHub repository with verbose logging
-repo2run --repo username/repo commit-sha --output-dir ./output --verbose
-
-# 2. Process a local repository using UV for dependency management
-repo2run --local /path/to/local/repo --output-dir ./output --use-uv
-
-# 3. Process multiple repositories in parallel
-repo2run --repo-list repos.txt --output-dir ./output --num-workers 4
-
-# 4. Process local repositories with a custom workspace
-repo2run --local-list local_repos.txt --workspace-dir ./custom_workspace --output-dir ./output
-
-# 5. Collect test cases without running tests or installing dependencies
-repo2run --repo username/repo commit-sha --output-dir ./output --collect-only
-
-# 6. Set a custom timeout and overwrite existing output
-repo2run --local /path/to/local/repo --output-dir ./output --timeout 1800 --overwrite
-```
-
-#### Repository List File Format
-
-For `--repo-list` and `--local-list`, use the following format:
-
-```
-# repos.txt or local_repos.txt
-# Format: repository_identifier commit_sha
-octocat/Hello-World abc123
-another/repo def456
-# Lines starting with # are comments
-```
+| `--skip-processed` | Skip already processed repositories | Disabled | `--skip-processed` |
+| `--extract-tests` | Extract test files without running | Disabled | `--extract-tests` |
+| `--run-tests` | Run tests from extracted test.jsonl | Disabled | `--run-tests` |
 
 ### Unified Pipeline
 
@@ -104,30 +92,16 @@ This approach is more efficient when processing multiple repositories with overl
 
 ```bash
 # Process repositories from a list file
-python run_unified_pipeline.py --repo-list repos.txt --output-dir output_path [options]
+repo2run --global --repo-list repos.txt --output-dir output_path [options]
 
 # Process local directories from a list file
-python run_unified_pipeline.py --local-list dirs.txt --output-dir output_path [options]
-
-# Use the main repo2run command with the --global flag
-repo2run --global --repo-list repos.txt --output-dir output_path [options]
 repo2run --global --local-list dirs.txt --output-dir output_path [options]
+
+# Run pipeline in separate stages
+repo2run --global --repo-list repos.txt --output-dir output_path --extract-dep
+repo2run --global --repo-list repos.txt --output-dir output_path --config-venv
+repo2run --global --repo-list repos.txt --output-dir output_path --run-test
 ```
-
-#### Arguments
-
-| Argument | Description | Default | Example |
-|----------|-------------|---------|---------|
-| `--repo-list FILE` | Process multiple repositories from a list file | None | `--repo-list repos.txt` |
-| `--local-list FILE` | Process multiple local repositories from a list file | None | `--local-list local_repos.txt` |
-| `--output-dir DIR` | Directory to store output files | `output` | `--output-dir ./results` |
-| `--workspace-dir DIR` | Directory to use as workspace | Temporary directory | `--workspace-dir ./workspace` |
-| `--timeout SECONDS` | Maximum execution time | 7200 (2 hours) | `--timeout 3600` |
-| `--verbose` | Enable detailed logging | Disabled | `--verbose` |
-| `--overwrite` | Overwrite existing output directory | Disabled | `--overwrite` |
-| `--use-uv` | Use UV for dependency management | Disabled (uses pip/venv) | `--use-uv` |
-| `--max-workers N` | Maximum number of worker threads | 4 | `--max-workers 8` |
-| `--repo-range START END` | Process only a specific range of repositories | None (all repos) | `--repo-range 0 100` |
 
 #### Output Files
 
@@ -138,43 +112,19 @@ The Unified Pipeline generates the following output files:
 3. `install_status.json`: Status of dependency installation (success/failure)
 4. `records.jsonl`: Detailed logs and execution status for each repository
 5. `successful_repos.json`: List of repositories that pass all tests or have no tests
+6. `test.jsonl`: Extracted test files and metadata (when using --extract-tests)
+7. `test_results.jsonl`: Results of running tests (when using --run-tests)
 
-#### Enhanced Progress Reporting
+### Repository List File Format
 
-The unified pipeline provides detailed progress reporting throughout the execution:
+For `--repo-list` and `--local-list`, use the following format:
 
-1. **Repository Loading Stage**: Lists repositories to be processed
-2. **Dependency Analysis Stage**: Shows real-time progress with package counts per repository 
-3. **Environment Creation Stage**: Shows detailed installation progress with batched processing
-4. **Test Execution Stage**: Displays test status for each repository in real-time
-5. **Final Summary**: Presents comprehensive statistics including:
-   - Test success/failure rates
-   - Dependency installation success rates
-   - Most common dependencies across repositories
-   - Overall repository success rate
-
-Each stage is clearly separated with visual dividers, and key statistics are highlighted with emoji indicators for easier visual parsing.
-
-#### Example
-
-```bash
-# Process 10 repositories, using 8 worker threads and UV for dependency management
-python run_unified_pipeline.py --repo-list repos.txt --output-dir ./unified_output --max-workers 8 --use-uv --verbose
-
-# Or use the main command with global flag
-repo2run --global --repo-list repos.txt --output-dir ./unified_output --max-workers 8 --use-uv --verbose
-
-# Process only repositories from index 0 to 99 (first 100 repos) in the list
-repo2run --global --repo-list repos.txt --output-dir ./batch1_output --repo-range 0 100 --use-uv
-
-# Process repositories from index 100 to 199 (second 100 repos) in the list
-repo2run --global --repo-list repos.txt --output-dir ./batch2_output --repo-range 100 200 --use-uv
-
-# Distribute work across multiple machines or jobs by specifying different ranges
-# Example for a CI/CD pipeline that processes 500 repos in 5 parallel jobs
-# Job 1: repo2run --global --repo-list repos.txt --output-dir ./job1 --repo-range 0 100
-# Job 2: repo2run --global --repo-list repos.txt --output-dir ./job2 --repo-range 100 200
-# ... and so on
+```
+# repos.txt or local_repos.txt
+# Format: repository_identifier commit_sha
+octocat/Hello-World abc123
+another/repo def456
+# Lines starting with # are comments
 ```
 
 ### Advanced Use Cases
@@ -191,6 +141,17 @@ repo2run --repo username/repo $CI_COMMIT_SHA --output-dir ./ci_results --verbose
 ```bash
 # Process multiple repositories with UV and parallel workers
 repo2run --repo-list performance_repos.txt --use-uv --num-workers 8 --output-dir ./perf_results
+```
+
+#### Distributed Processing
+
+```bash
+# Process repositories in batches across multiple machines
+# Machine 1: Process repos 0-99
+repo2run --global --repo-list repos.txt --output-dir ./batch1 --repo-range 0 100
+
+# Machine 2: Process repos 100-199
+repo2run --global --repo-list repos.txt --output-dir ./batch2 --repo-range 100 200
 ```
 
 ### Python API
@@ -237,8 +198,6 @@ Repo2Run supports two dependency management systems:
    - Better dependency resolution in complex cases
    - Can be enabled with the `--use-uv` flag
 
-You can choose the dependency system that works best for your use case.
-
 ## Directory Structure
 
 When processing repositories, Repo2Run creates the following directory structure:
@@ -255,72 +214,6 @@ workspace_dir/
         ├── (repository files)
         └── sha.txt
 ```
-
-## Output Files
-
-For each repository processed, Repo2Run generates the following output files:
-
-- `{repo_name}_requirements.txt`: Unified requirements extracted from the repository
-- `{repo_name}_installation_results.json`: Results of installing dependencies
-- `{repo_name}_test_results.json`: Results of running tests
-- `{repo_name}_summary.json`: Summary of the entire process
-
-### Results Format (results.jsonl)
-
-The main output is stored in `results.jsonl`, where each line is a JSON object containing the complete results for a repository. The format is:
-
-```json
-{
-    "repository": "username/repo@sha or /path/to/local/repo",
-    "repository_identifier": "username_repo_sha7 or repo_name",
-    "status": "success|failure|error|skip|partial_success",
-    "configuration": {
-        "output_directory": "/path/to/output",
-        "overwrite_mode": false,
-        "timeout": 7200,
-        "use_uv": false
-    },
-    "dependencies": {
-        "found": 10,
-        "installed": 8,
-        "details": ["package1==1.0.0", "package2>=2.0.0"],
-        "compiled_requirements": ["package1==1.0.0", "package2==2.1.0"]
-    },
-    "tests": {
-        "found": 50,
-        "passed": 45,
-        "failed": 3,
-        "skipped": 2,
-        "details": [
-            {
-                "name": "test_function",
-                "file": "tests/test_file.py",
-                "status": "passed|failed|skipped",
-                "message": "Error message if failed"
-            }
-        ]
-    },
-    "execution": {
-        "start_time": 1234567890.123,
-        "elapsed_time": 120.5
-    },
-    "logs": [
-        {
-            "timestamp": "2024-02-20 10:30:45",
-            "level": "INFO|WARNING|ERROR",
-            "message": "Log message"
-        }
-    ],
-    "error": "Error message if status is error"
-}
-```
-
-Status values:
-- `success`: All tests passed
-- `partial_success`: Some tests passed, some failed
-- `failure`: All tests failed
-- `error`: An error occurred during processing
-- `skip`: No tests were found or all tests were skipped
 
 ## Supported Dependency Sources
 
