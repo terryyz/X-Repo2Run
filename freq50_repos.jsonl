@@ -1,0 +1,211 @@
+{"repo_name": "cyrus19901/VOLTTRON-azure", "requirements": ["pytz", "python-dateutil>=2,<3", "requests>=2.2,<3", "psutil", "ply"]}
+{"repo_name": "Earth4Us/flopy", "requirements": ["numpy>=1.9", "matplotlib>=1.4"]}
+{"repo_name": "isynch/OMOOC2py", "requirements": ["nose", "requests"]}
+{"repo_name": "davidkwan95/bri2016-backend", "requirements": ["Django==1.10.1", "djangorestframework==3.4.7", "django-cors-headers==1.2.0", "Pillow==3.3.1", "qrcode==5.1", "psycopg2==2.6.2"]}
+{"repo_name": "redcliver/inomont", "requirements": ["Django==2.2.4", "gunicorn==19.9.0", "pytz==2019.2", "sqlparse==0.3.0", "dj-database-url==0.5.0", "django-heroku==0.3.1", "gunicorn==19.9.0", "psycopg2==2.7.7", "psycopg2-binary==2.8.4", "whitenoise==4.1.2", "cloudinary==1.18.2"]}
+{"repo_name": "butagreeza/DTDATA_A", "requirements": ["xlrd"]}
+{"repo_name": "HughP/CorpusTools", "requirements": ["pytest", "sphinx>=1.3b3", "numpydoc", "numpy", "scipy"]}
+{"repo_name": "adeeps1/Localization", "requirements": ["numpy==1.13.3", "scipy==0.19.1"]}
+{"repo_name": "arinablake/new_python-selenium-automation", "requirements": ["behave", "selenium"]}
+{"repo_name": "Marshall210/My_site", "requirements": ["django"]}
+{"repo_name": "egibney/listapp", "requirements": ["django==1.4.1"]}
+{"repo_name": "r4inm4ker/Kraken", "requirements": ["PySide==1.2.2"]}
+{"repo_name": "GeneralizedLearningUtilities/SuperGLU", "requirements": ["virtualenv"]}
+{"repo_name": "belmont-acreeg/aima-python", "requirements": ["networkx==1.11"]}
+{"repo_name": "materialsvirtuallab/pyhull", "requirements": ["numpy==1.22.0"]}
+{"repo_name": "edublancas/pipeline", "requirements": ["pytest", "tinydb"]}
+{"repo_name": "jaylakhani14/statcalc", "requirements": ["numpy", "scipy"]}
+{"repo_name": "ysa23/blockchain", "requirements": ["Flask==0.12.2", "requests==2.18.4"]}
+{"repo_name": "usmanghani/AzureViewerService", "requirements": ["Django", "psycopg2", "docutils", "requests", "south", "BeautifulSoup", "simplejson", "dj-database-url", "lxml"]}
+{"repo_name": "leogau/api-example-django", "requirements": ["Django==1.6.1", "dj-database-url==0.2.0", "psycopg2==2.4.5", "requests==1.1.0", "wsgiref==0.1.2"]}
+{"repo_name": "furgot100/CarHub", "requirements": ["django==2.2.7", "gunicorn"]}
+{"repo_name": "janzaheer/timesheet", "requirements": ["asgiref==3.2.4", "backcall==0.1.0", "decorator==4.4.2", "Django==3.0.4", "gunicorn==20.0.4", "ipython==7.13.0", "ipython-genutils==0.2.0", "jedi==0.16.0", "parso==0.6.2", "pexpect==4.8.0", "pickleshare==0.7.5", "prompt-toolkit==3.0.4", "ptyprocess==0.6.0", "Pygments==2.6.1", "pytz==2019.3", "six==1.14.0", "sqlparse==0.3.1", "traitlets==4.3.3", "wcwidth==0.1.8"]}
+{"repo_name": "scanfsec/WinPwnage", "requirements": ["colorama"]}
+{"repo_name": "hugomatic/softlayer-api-python-client", "requirements": ["tox", "nose", "mock", "coverage", "sphinx"]}
+{"repo_name": "puppycodes/arpspoof", "requirements": ["wheel==0.23.0"]}
+{"repo_name": "opoudel/sculptbf-bot", "requirements": ["Flask==0.11.1", "Jinja2==2.8", "MarkupSafe==0.23", "Werkzeug==0.11.10", "click==6.6", "gunicorn==19.6.0", "itsdangerous==0.24", "requests==2.10.0", "wsgiref==0.1.2"]}
+{"repo_name": "guoyu07/fetchQzone", "requirements": ["django==1.5.5", "MySQL-python", "qiniu==7.0.1"]}
+{"repo_name": "Cazuky/cepy", "requirements": ["BeautifulSoup==3.2.1", "Flask==0.8", "Jinja2==2.6", "Werkzeug==0.8.3", "nose==1.2.1", "requests==0.14.2", "wsgiref==0.1.2", "newrelic"]}
+{"repo_name": "masa4u/example_python", "requirements": ["colorama==0.3.3"]}
+{"repo_name": "raghav96/DatabaseWebApp", "requirements": ["dj-database-url==0.4.1", "Django==1.9.7", "gunicorn==19.6.0", "psycopg2==2.6.2", "whitenoise==2.0.6"]}
+{"repo_name": "eyeyunianto/ghiro", "requirements": ["Django==1.6.7", "Pillow>=2.4.0", "argparse>=1.2.1", "chardet>=2.2.1", "pdfkit>=0.4.1", "pymongo>=2.6.3", "python-dateutil>=2.2", "python-magic>=0.4.6"]}
+{"repo_name": "MiaoDragon/ocrtoc_motion_planning", "requirements": ["scipy==1.2.3", "networkx==2.2", "pyrsistent==0.16.0", "open3d==0.9.0", "opencv-python==4.2.0.32"]}
+{"repo_name": "ppinard/django-login-otp", "requirements": ["django", "pyotp"]}
+{"repo_name": "Barry-Chen-Intersective/Proj-Api-Test", "requirements": ["boto3>=1.7.33", "requests>=2.18.4"]}
+{"repo_name": "sanjitk7/ImageSpacialIntensityTransformations", "requirements": ["certifi==2020.6.20", "cycler==0.10.0", "kiwisolver==1.2.0", "matplotlib==3.3.2", "numpy==1.19.2", "opencv-python==4.4.0.44", "Pillow==7.2.0", "pyparsing==2.4.7", "python-dateutil==2.8.1", "six==1.15.0"]}
+{"repo_name": "forgeworks/splendor", "requirements": ["Flask==1.0.2", "pytest==3.5.0", "inflection==0.3.1", "sphinx==1.8.1"]}
+{"repo_name": "thispl/giico", "requirements": ["frappe"]}
+{"repo_name": "jonimng/classCloud", "requirements": ["click==6.7", "Flask==0.12", "itsdangerous==0.24", "Jinja2==2.9.3", "MarkupSafe==0.23", "virtualenv==15.1.0", "Werkzeug==0.11.15"]}
+{"repo_name": "saratrickett/python-kata", "requirements": ["pytest"]}
+{"repo_name": "SebastianAlessandro/tethys", "requirements": ["numpy>=1.13.1", "scipy>=0.18.1", "matplotlib>=2.0.2", "pandas>=0.19.2", "configobj>=5.0.6"]}
+{"repo_name": "leelasd/genopheno", "requirements": ["matplotlib", "pandas", "numpy", "pydotplus", "pytest", "scikit-learn", "scipy", "patsy", "graphviz"]}
+{"repo_name": "Gdinesh03/Frappe", "requirements": ["frappe"]}
+{"repo_name": "nbermudezs/bracketology", "requirements": ["seaborn", "matplotlib", "numpy", "pandas"]}
+{"repo_name": "JJoving/SMLAT", "requirements": ["visdom"]}
+{"repo_name": "quanted/cyan_app", "requirements": ["django", "nose", "numpy", "requests", "tabulate"]}
+{"repo_name": "CVML-Detection/Detection_Party", "requirements": ["matplotlib", "wget", "numpy"]}
+{"repo_name": "philax/gourd_of_the_lings", "requirements": ["flask"]}
+{"repo_name": "Athenolabs/Tools-Box", "requirements": ["frappe"]}
+{"repo_name": "Rakaneth/python-tcod", "requirements": ["cffi>=1.8.1,<2", "numpy>=1.10,<2;", "pycparser>=2.14,<3", "setuptools>=36.0.1"]}
+{"repo_name": "exsmiley/counter-dox-9001", "requirements": ["flask"]}
+{"repo_name": "macdaliot/python-limacharlie", "requirements": ["gevent", "requests", "passlib", "pyyaml"]}
+{"repo_name": "gerlad/greenline", "requirements": ["PIL==1.1.7", "django-taggit==0.9.3", "feedparser==5.0.1", "geopy==0.94", "httplib2==0.6.0", "psycopg2==2.4"]}
+{"repo_name": "OlexandrDobra/python_language", "requirements": ["pyyaml", "pytest"]}
+{"repo_name": "arinablake/python-selenium-automation", "requirements": ["behave", "selenium"]}
+{"repo_name": "XNetLab/DeepMatching", "requirements": ["numpy==1.13.3", "scipy==1.0.0", "gensim==3.1.0", "networkx==1.11", "sklearn==0.0", "futures==3.1.1", "psutil==5.4.1", "matplotlib==1.13.1"]}
+{"repo_name": "saintleocom/picosdk-python-wrappers", "requirements": ["numpy>=1.12.1"]}
+{"repo_name": "willsion/push_api", "requirements": ["tornado", "futures", "websocket-client"]}
+{"repo_name": "smeissner/ifrc", "requirements": ["python-dateutil>=1.5", "lxml>=2.2.8", "xlwt>=0.7.2", "Shapely>=1.2.14", "PIL>=1.1.7", "reportlab>=2.5", "pyserial>=2.6", "tweepy>=1.9", "xlrd>=0.7.1", "numpy>=1.6.2", "selenium>=2.23.0"]}
+{"repo_name": "stevenaubertin/wol-honeycomb", "requirements": ["Flask==0.12.2"]}
+{"repo_name": "Phlasse/Opti-bin", "requirements": ["matplotlib==3.3.2", "numpy==1.18.4", "pandas==0.24.2"]}
+{"repo_name": "Siva-Karthi/ProblemSolvingPractice", "requirements": ["pytest==8.3.3"]}
+{"repo_name": "andresafanador2/Inicial", "requirements": ["fastapi==0.62.0", "uvicorn==0.12.3", "pydantic==1.7.3"]}
+{"repo_name": "sezinie/poretools", "requirements": ["h5py>=2.0.0", "rpy2>=2.4.2"]}
+{"repo_name": "toddrimes/CWR-DataApi", "requirements": ["pyparsing==2.0.3", "pyyaml==3.11", "chardet==2.3.0", "setuptools==14.0"]}
+{"repo_name": "vikineema/MappingPaddyRice", "requirements": ["Pillow", "numpy", "scikit-learn", "gdal", "matplotlib"]}
+{"repo_name": "hapylestat/apputils", "requirements": ["setuptools >= 75.3.0"]}
+{"repo_name": "OlamideD/prometheus", "requirements": ["frappe"]}
+{"repo_name": "vhgnguyen/Robotic-Algorithms", "requirements": ["matplotlib>=3.1.2", "numpy>=1.17.4", "scipy>=1.3.3", "sklearn"]}
+{"repo_name": "AidanKelley/LEDTileControl", "requirements": ["pyserial", "numpy", "matplotlib", "opencv-python", "pyaudio"]}
+{"repo_name": "LandWhale2/lstagram", "requirements": ["astroid==2.2.5", "dj-database-url==0.5.0", "Django==2.2.5", "gunicorn==19.9.0", "isort==4.3.21", "lazy-object-proxy==1.4.2", "mccabe==0.6.1", "Pillow==6.1.0", "pylint==2.3.1", "pytz==2019.2", "six==1.12.0", "sqlparse==0.3.0", "typed-ast==1.4.0", "whitenoise==4.1.3", "wrapt==1.11.2", "psycopg2==2.7.1"]}
+{"repo_name": "JessieYF/flask-celery-docker-demo", "requirements": ["flask", "celery", "redis", "gunicorn"]}
+{"repo_name": "TechMaster/LearnAI", "requirements": ["numpy", "matplotlib", "keras"]}
+{"repo_name": "testtesthu/dkdkdkdgkdkgykvnmf", "requirements": ["tornado==4.2.1", "requests==2.0.0", "pymongo==2.7", "python-dateutil==2.4.2"]}
+{"repo_name": "tabeals/casino", "requirements": ["Django>=1.11.23,<2.0", "djangorestframework>=3.6.0,<3.7.0"]}
+{"repo_name": "motdotla/moviegrid", "requirements": ["Flask==0.10.1", "Flask-RESTful==0.2.3", "Jinja2==2.7", "MarkupSafe==0.18", "Werkzeug==0.9.1", "configobj==4.7.2", "distribute==0.6.45", "gunicorn==17.5", "itsdangerous==0.22", "requests==1.2.3", "simplejson==3.3.0", "virtualenv==1.9.1", "wsgiref==0.1.2"]}
+{"repo_name": "hyrise-mp/hyrise", "requirements": ["scipy>=1.0", "termcolor>=1.0", "terminaltables>=3.0", "matplotlib>=2.1.1", "pexpect>=4.7.0"]}
+{"repo_name": "Monicadelai/RatonGato_App", "requirements": ["dj-database-url==0.3.0", "dj-static==0.0.6", "Django==1.9", "Pillow==2.8.2", "psycopg2==2.6.1", "static3==0.7.0", "gunicorn==19.6.0"]}
+{"repo_name": "incubateind/iis-ms-del", "requirements": ["Flask==1.1.1", "requests==2.22.0"]}
+{"repo_name": "publicres/zijingzhisheng", "requirements": ["django==1.6.1", "MySQL-python==1.2.4", "xlwt==0.7.5"]}
+{"repo_name": "kingofhawks/greenbuilding", "requirements": ["Django==1.8.3", "arrow==0.4.2", "requests==1.2.3", "selenium==2.42.1", "reportlab", "xhtml2pdf==0.0.6", "pymongo==2.7.2", "zeep"]}
+{"repo_name": "stephvgo/djangoboards", "requirements": ["dj-database-url==0.5.0", "Django==1.11.4", "django-widget-tweaks==1.4.3", "Markdown==3.0.1", "python-decouple==3.1", "pytz==2018.7"]}
+{"repo_name": "K20shores/PivtoalSoftware", "requirements": ["pymongo", "django"]}
+{"repo_name": "kriswans/stealthwatch-enterprise-learning-labs-code", "requirements": ["requests==2.21.0"]}
+{"repo_name": "5alt/ZeroScan", "requirements": ["gevent", "requests", "scapy", "dnspython", "tldextract", "lxml", "bs4", "tqdm"]}
+{"repo_name": "DarienDuong/Genes_search", "requirements": ["Django==2.0.4", "gunicorn==19.6.0", "pytz==2018.4", "whitenoise==3.2.1", "dj-database-url==0.5.0", "psycopg2==2.7.4", "djangorestframework==3.8.2"]}
+{"repo_name": "hqpr/marketcsgo", "requirements": ["Django==1.9", "dj-static", "whitenoise==1.0.6", "psycopg2", "dj-database-url==0.3.0", "gunicorn", "simplejson"]}
+{"repo_name": "jcezarms/bcg-gamma-challenge", "requirements": ["pandas==0.25.2", "numpy==1.17.3", "seaborn==0.9.0", "Unidecode==1.1.1", "geopandas==0.6.0"]}
+{"repo_name": "prezi/python-mysql-pool", "requirements": ["pytest"]}
+{"repo_name": "MoiraJune/karlooper", "requirements": ["Jinja2>=2.8"]}
+{"repo_name": "BabyManisha/SivaMani", "requirements": ["pymongo", "Django", "celery"]}
+{"repo_name": "SludgeSlug/bookProj", "requirements": ["Flask==0.10.1", "pymongo==3.0.2"]}
+{"repo_name": "Nivl/django-pipeline", "requirements": ["tox", "flake8"]}
+{"repo_name": "remyroy/pyCraft", "requirements": ["pycrypto==2.5", "SQLAlchemy>=0.7.9", "psycopg2>=2.4.5"]}
+{"repo_name": "ecarreras/subcmd", "requirements": ["nose", "sphinx"]}
+{"repo_name": "wronk/dbw", "requirements": ["numpy==1.9.2", "matplotlib==1.4.3", "networkx==1.9.1"]}
+{"repo_name": "chelseaz/algoteach", "requirements": ["matplotlib==1.5.1", "numpy==1.11.1", "scikit-learn==0.17.1"]}
+{"repo_name": "hwang-happy/AbPyTools", "requirements": ["scipy", "numpy", "joblib", "pandas", "tqdm >= 4.15", "seaborn", "matplotlib", "beautifulsoup4", "lxml"]}
+{"repo_name": "TrentonBush/ruptures", "requirements": ["numpy", "scipy"]}
+{"repo_name": "bahoo/babyoftheday", "requirements": ["Pillow", "boto", "dj-static"]}
+{"repo_name": "elemewanggao/Maitreya", "requirements": ["Flask==0.10.1", "Flask-Cors==3.0.2", "jsonpickle==0.9.2", "webargs==1.0.0", "gevent==1.2.2", "blinker==1.4", "beautifulsoup4==4.6.0", "lxml==3.8.0", "html5lib", "SQLAlchemy==0.9.3", "PyMySQL==0.6.6"]}
+{"repo_name": "exversion/layer", "requirements": ["Flask", "Flask-RESTful", "psycopg2"]}
+{"repo_name": "komalk1992/scap1", "requirements": ["frappe"]}
+{"repo_name": "yenru0/CodeObjecct", "requirements": ["click>=8.1"]}
+{"repo_name": "flavour/rgims", "requirements": ["python-dateutil>=1.5", "lxml>=2.2.8", "xlwt>=0.7.2", "Shapely>=1.2.14", "PIL>=1.1.7", "reportlab>=2.5", "pyserial>=2.6", "tweepy>=1.9", "xlrd>=0.7.1", "numpy>=1.6.2", "selenium>=2.23.0"]}
+{"repo_name": "RaghavRamesh/Kwest-Hack-n-Roll", "requirements": ["Flask==0.10.1"]}
+{"repo_name": "lordhamster66/Automation-Engineering", "requirements": ["PyMySQL>=0.7.9", "gevent>=1.2.2", "xlwt>=1.1.2", "xlrd>=1.0.0"]}
+{"repo_name": "mkgilbert/cs399_the_theatre", "requirements": ["django==1.7.2", "requests==2.5.1", "beautifulsoup4>=4"]}
+{"repo_name": "ToeiKanta/head-pose-module", "requirements": ["dlib", "numpy", "opencv-python"]}
+{"repo_name": "akabbeke/sd44_server", "requirements": ["sqlalchemy", "pyyaml", "flask"]}
+{"repo_name": "dmompati/eventfinder", "requirements": ["django==2.2", "psycopg2==2.8.3"]}
+{"repo_name": "lvaldivia/django-integracion", "requirements": ["Django==1.9", "MySQL-python==1.2.5", "Werkzeug==0.9.6", "argparse==1.2.1", "diff-match-patch==20121119", "django-import-export==0.2.3", "httplib2==0.9", "oauth2==1.5.211", "simplejson==3.6.2", "tablib==0.10.0", "wsgiref==0.1.2", "Pillow==2.5.3"]}
+{"repo_name": "khjs534/safebox", "requirements": ["Flask>=0.8", "twilio>=3.3.6"]}
+{"repo_name": "jcollie/norm", "requirements": ["Twisted", "psycopg2"]}
+{"repo_name": "abitb/snacks-flask", "requirements": ["Flask", "Flask-WTF"]}
+{"repo_name": "rincewind/django-gitlab-logging", "requirements": ["Django>=1.6", "requests"]}
+{"repo_name": "igorecarrasco/Elly", "requirements": ["click==6.6", "Django==1.10.2", "future==0.15.2", "httplib2==0.9.2", "oauth2==1.9.0.post1", "oauthlib==2.0.0", "psycopg2==2.6.2", "pyparsing==2.0.1", "python-dateutil==1.5", "python-dotenv==0.6.0", "requests==2.11.1", "requests-oauthlib==0.7.0", "simplejson==3.8.2", "six==1.4.1", "BeautifulSoup==3.2.1"]}
+{"repo_name": "yuede/tweetnet", "requirements": ["Flask==0.10.1", "Jinja2==2.7.2", "MarkupSafe==0.19", "Werkzeug==0.9.4", "gunicorn==18.0", "itsdangerous==0.24", "redis==2.9.1", "requests==2.2.1", "tweepy==2.2", "wsgiref==0.1.2"]}
+{"repo_name": "ouc-cook/coresyf-toolkit", "requirements": ["gdal==2.1.3", "scipy==0.19.0", "numpy==1.12.0", "opencv-python", "scikit-learn==0.18.1", "matplotlib==2.0.0", "scikit-image==0.12.3"]}
+{"repo_name": "skoczen/python-fitbit", "requirements": ["oauth2>=1.5.211", "requests>=0.14.0", "python-dateutil>=1.5", "requests-oauthlib"]}
+{"repo_name": "pawaranand/phr_5_1", "requirements": ["frappe"]}
+{"repo_name": "lucashn/peakutils", "requirements": ["setuptools", "numpy>=1.8", "scipy>=0.17"]}
+{"repo_name": "jcfr/pynwb", "requirements": ["nose", "sphinx"]}
+{"repo_name": "randy-ran/ChinaAPI", "requirements": ["rsa", "requests", "httpretty"]}
+{"repo_name": "AIDungeonWiXAnon/pixel_ring_simple", "requirements": ["spidev", "pyusb"]}
+{"repo_name": "whereisyourpet/petfinder_be", "requirements": ["Django==2.1.7", "django-cors-headers==2.4.0", "django-rest-swagger==2.2.0", "djangorestframework==3.9.1", "numpy==1.16.2", "pymysql==0.9.3", "mysqlclient==1.4.2"]}
+{"repo_name": "alberthier/bhware", "requirements": ["coverage==3.6b1", "mock==1.0.1"]}
+{"repo_name": "teou/aysha", "requirements": ["gevent==1.0.1"]}
+{"repo_name": "koala7580/ndvr-dml", "requirements": ["numpy>=1.9", "tqdm>=4.2", "scikit-learn>=0.19", "scipy>=1.0", "matplotlib>=2.2"]}
+{"repo_name": "strogo/djpcms", "requirements": ["django>=1.2", "PIL"]}
+{"repo_name": "asuc-octo/project-scanner", "requirements": ["Django==1.10", "djangorestframework==3.4.3", "Pygments==2.1.3", "gunicorn==19.6.0", "dj_database_url==0.2.2", "psycopg2==2.6.2"]}
+{"repo_name": "artitw/Artificial-Intelligence-Blockchain-Homomorphic-Encryption", "requirements": ["sphinx_rtd_theme", "websockets"]}
+{"repo_name": "kasicass/fatuv", "requirements": ["six==1.15.0"]}
+{"repo_name": "vinnishtein/conductor", "requirements": ["pymongo", "flask", "coverage", "PyYAML", "python-memcached", "prometheus_client"]}
+{"repo_name": "cepho/teampro", "requirements": ["frappe"]}
+{"repo_name": "luviii/flask-web-project", "requirements": ["alembic==1.0.5", "asn1crypto==0.24.0", "blinker==1.4", "cffi==1.11.5", "Click==7.0", "cryptography==2.4.2", "Flask==1.0.2", "Flask-Login==0.4.1", "Flask-Mail==0.9.1", "Flask-Migrate==2.3.1", "Flask-Script==2.0.6", "Flask-SQLAlchemy==2.3.2", "Flask-WTF==0.14.2", "idna==2.8", "itsdangerous==1.1.0", "Jinja2==2.10.1", "Mako==1.0.7", "MarkupSafe==1.1.0", "pycparser==2.19", "PyJWT==1.7.1", "PyMySQL==0.9.2", "python-dateutil==2.7.5", "python-editor==1.0.3", "six==1.12.0", "SQLAlchemy==1.3.0", "Werkzeug==0.15.3", "WTForms==2.2.1"]}
+{"repo_name": "exshin/passwordgame", "requirements": ["alembic==0.7.6", "Flask==0.10.1", "Flask-Migrate==1.4.0", "Flask-Script==2.0.5", "Flask-SQLAlchemy==2.0", "itsdangerous==0.24", "Jinja2==2.7.3", "Mako==1.0.1", "MarkupSafe==0.23", "psycopg2==2.6", "requests==2.7.0", "SQLAlchemy==1.0.4", "Werkzeug==0.10.4", "gunicorn>=19.1.1"]}
+{"repo_name": "wmizzi/tn2capstone", "requirements": ["nose", "sphinx"]}
+{"repo_name": "CapnFlint/GrogBot", "requirements": ["httplib2", "mysqlclient", "requests", "websocket_client", "oauth2"]}
+{"repo_name": "barcarunrun/tf_chat", "requirements": ["PyMySQL==0.9.2", "Django<2.0.0,>=1.11.8", "google-api-python-client", "djangorestframework==3.5.2", "markdown ", "django-filter==1.1", "django-widget-tweaks"]}
+{"repo_name": "alexsilva/joomla-tools", "requirements": ["PySide"]}
+{"repo_name": "arpitjain06/propshikhari", "requirements": ["frappe"]}
+{"repo_name": "jtavara23/udacity_introML", "requirements": ["nltk==3.2.1", "numpy==1.11.2", "scikit-learn==0.18", "scipy==0.18.1", "streamlit"]}
+{"repo_name": "detian08/pennyu", "requirements": ["openpyxl==3.0.3"]}
+{"repo_name": "Raghuvar/edyst_assignment", "requirements": ["Flask==1.0.2", "Flask-SQLAlchemy==2.3.2", "Flask-WTF==0.14.2", "redis==2.10.6", "requests==2.19.1", "rq==0.12.0", "SQLAlchemy==1.2.12"]}
+{"repo_name": "defcon1983/project_bro_universidad", "requirements": ["asgiref==3.2.10", "dj-database-url==0.3.0", "dj-static==0.0.6", "Django==3.0.8", "django-toolbelt==0.0.1", "gunicorn==19.1.0", "Pillow==7.2.0", "psycopg2==2.8.5", "PyMySQL==0.10.0", "pytz==2020.1", "simplejson==3.6.0", "sqlparse==0.3.1", "static3==0.5.1"]}
+{"repo_name": "gtavasoli/JSON-Generator", "requirements": ["Faker==2.0.0"]}
+{"repo_name": "gugu/Django-facebook", "requirements": ["django>=1.3"]}
+{"repo_name": "martinlarsalbert/rolldecay-estimators", "requirements": ["pandas", "numpy", "scipy", "scikit-learn", "matplotlib", "sympy", "dill"]}
+{"repo_name": "pythononwheels/copow", "requirements": ["Cerberus==0.7.2", "pymongo==2.7.1", "tornado==3.1.1"]}
+{"repo_name": "nitish-awasthi/cyanobyte", "requirements": ["click", "pylint", "pyyaml", "Jinja2", "jsonschema", "importlib_metadata", "pathlib2"]}
+{"repo_name": "PogudoTanya/sc-machine", "requirements": ["termcolor", "tornado"]}
+{"repo_name": "Jwpe/Flask-Nicely", "requirements": ["flask"]}
+{"repo_name": "EmmySmith/autoInterfaceTest", "requirements": ["requests==2.22.0", "pymysql==0.9.3", "xlrd==1.2.0", "parameterized==0.7.0", "bs4==0.0.1"]}
+{"repo_name": "alejandrobernardis/tornado-mixpanel", "requirements": ["tornado==4.0.2", "ujson"]}
+{"repo_name": "lijingpeng/aliyun-odps-python-sdk", "requirements": ["requests>=2.4.0"]}
+{"repo_name": "BenGiese22/simple-foodie-api", "requirements": ["dj-database-url==0.5.0", "Django==3.0.4", "django-heroku==0.3.1", "djangorestframework==3.11.0", "gunicorn==20.0.4", "psycopg2==2.8.4", "psycopg2-binary==2.8.4", "python-dotenv==0.12.0", "pytz==2019.2", "whitenoise==5.0.1", "django-cors-headers==3.2.1"]}
+{"repo_name": "yeskarthik/JavaWithTheFlow", "requirements": ["bottle", "pymysql", "elasticsearch>=1.0.0,<2.0.0", "nltk"]}
+{"repo_name": "wk1984/demeter-w", "requirements": ["numpy>=1.13.1", "scipy>=0.18.1", "matplotlib>=2.0.2", "pandas>=0.19.2", "configobj>=5.0.6"]}
+{"repo_name": "basil08/domonic", "requirements": ["python-dateutil==2.8.2", "requests==2.26.0", "urllib3==1.26.7"]}
+{"repo_name": "Albertojuanse/miso_beacon", "requirements": ["scipy", "numpy"]}
+{"repo_name": "MinGH0311/2017-", "requirements": ["BeautifulSoup", "konlpy", "nltk", "psycopg2"]}
+{"repo_name": "vectranetworks/triage-o-matic", "requirements": ["requests"]}
+{"repo_name": "iotwlw/MagicGoogle", "requirements": ["pyquery>=1.2.17", "requests>=2.12.4", "cchardet>=2.1.1", "PyMySQL>=0.8.0", "beautifulsoup4>=4.6.0", "pathlib2>=2.3.2", "psutil>=5.4.5", "pyquery>=1.4.0"]}
+{"repo_name": "vvuksan/py-statsd", "requirements": ["unittest2", "nose", "mock"]}
+{"repo_name": "SUNET/lobo2a", "requirements": ["requests", "feedparser"]}
+{"repo_name": "cermegno/mqtt-dash", "requirements": ["Flask", "redis"]}
+{"repo_name": "batwalrus76/ubertool_eco", "requirements": ["Django==1.6.7", "numpy==1.8.0", "pytz"]}
+{"repo_name": "Ghloin/tweeria", "requirements": ["jinja2", "pymongo", "python-dateutil", "simplejson", "cherrypy", "python-memcached"]}
+{"repo_name": "matheusbrat/coursera-bioinformatics-for-begginers", "requirements": ["pytest"]}
+{"repo_name": "alicexue/MTurk", "requirements": ["Flask >= 0.12", "pandas >= 0.21"]}
+{"repo_name": "KostiantynKukh/toDoListDocker", "requirements": ["flask", "pymongo", "gunicorn==19.6.0", "nose", "PyJWT"]}
+{"repo_name": "SBUNetSys/DeQA", "requirements": ["numpy", "scikit-learn", "termcolor", "regex", "tqdm", "prettytable", "scipy", "nltk", "pexpect", "xgboost", "pandas"]}
+{"repo_name": "jvitku/nengo", "requirements": ["numpy>=1.5", "theano"]}
+{"repo_name": "excander/mai-student-life", "requirements": ["Django==1.9.5", "django-bootstrap3==7.0.1", "djangorestframework==3.3.3"]}
+{"repo_name": "shrikant9867/mycfo", "requirements": ["frappe", "openpyxl"]}
+{"repo_name": "lashleykeith/watchpriceapp", "requirements": ["Flask == 0.12.2", "pymongo == 3.6.0", "beautifulsoup4 == 4.6.0", "passlib == 1.7.1", "requests == 2.18.4"]}
+{"repo_name": "alexshevelkin/SynapseAnalysis", "requirements": ["scipy", "numpy", "scikit-image"]}
+{"repo_name": "michaelbironneau/agitate", "requirements": ["requests==1.2.3", "pyyaml==3.10"]}
+{"repo_name": "proenterprise/angola_erp", "requirements": ["frappe"]}
+{"repo_name": "bpgoldsb/scrapy-sqlitem", "requirements": ["Scrapy>=0.24.5", "sqlalchemy", "six"]}
+{"repo_name": "poweroftrue/hungerstation", "requirements": ["frappe"]}
+{"repo_name": "n33t1/jeopardy-crawler", "requirements": ["beautifulsoup4==4.3.2", "lxml==3.4.0", "futures==2.2.0", "gevent==1.3 "]}
+{"repo_name": "RockJohnson503/factory-python", "requirements": ["django>=2.2", "mysqlclient==1.4.2.post1"]}
+{"repo_name": "timsklenar/dep", "requirements": ["pyshp", "tqdm", "pandas", "psycopg2"]}
+{"repo_name": "spade845/info3180project1", "requirements": ["Flask==0.12", "Jinja2==2.9.4", "MarkupSafe==0.23", "Werkzeug==0.11.15", "click==6.7", "gunicorn==19.6.0", "itsdangerous==0.24", "wsgiref==0.1.2"]}
+{"repo_name": "PTimofeev/BrowserTestRunner", "requirements": ["requests==2.7.0", "retrying==1.3.3", "selenium==2.47.3"]}
+{"repo_name": "xiaol/news_baijia", "requirements": ["jieba == 0.36.2", "gensim", "scikit-learn"]}
+{"repo_name": "westonnovelli/openbar", "requirements": ["enum34==1.0.4"]}
+{"repo_name": "ody/cd-demo", "requirements": ["docopt", "requests"]}
+{"repo_name": "albarralnunez/advent-of-code-16", "requirements": ["unittest2==1.1.0", "PyYAML==3.12"]}
+{"repo_name": "verdan/django-url-shortener", "requirements": ["pip==1.4", "django==1.6.5", "South==0.8.4"]}
+{"repo_name": "hatem-wasfy/python-webhook", "requirements": ["Flask==0.10.1"]}
+{"repo_name": "dasqueel/dfs-cfb", "requirements": ["flask", "gunicorn", "flask_cors"]}
+{"repo_name": "MattSegal/QueensSpeech", "requirements": ["flask", "numpy"]}
+{"repo_name": "edupr91/CDNWS-examples", "requirements": ["pip>=9.0.1", "requests>=2.1.0", "cryptography"]}
+{"repo_name": "jpbonson/SBBFramework", "requirements": ["argparse==1.2.1", "nose==1.3.7", "scikit-learn==0.17.1", "sklearn==0.0", "wsgiref==0.1.2"]}
+{"repo_name": "piyush01123/Revisiting-Classical-ML", "requirements": ["pandas", "numpy", "scikit-learn", "matplotlib", "cvxpy"]}
+{"repo_name": "mmblack4/tech-feed-publisher-socket", "requirements": ["flask", "Flask-Mail", "Flask-SQLAlchemy", "Jinja2"]}
+{"repo_name": "yinchinan010/learning-selenium-python", "requirements": ["selenium==3.9.0"]}
+{"repo_name": "yujunz/qtip", "requirements": ["colorama", "ansible", "click", "connexion", "Jinja2", "numpy", "paramiko", "pbr", "prettytable", "six", "PyYAML", "humanfriendly"]}
+{"repo_name": "rayHrx/complete_rendered_intrinsic_network", "requirements": ["numpy>=1.11.3", "scipy>=0.19.1", "matplotlib==2.0.0", "tqdm"]}
+{"repo_name": "piotrlgol/GAE-test", "requirements": ["flake8==2.6.2", "coverage==4.5.4"]}
+{"repo_name": "Retr02332/Agenda_Contactos", "requirements": ["asgiref==3.3.4", "Django==3.2.3", "mysqlclient==2.0.3", "Pillow==8.2.0", "pytz==2021.1", "sqlparse==0.4.1"]}
+{"repo_name": "taherkhalil/mop", "requirements": ["frappe"]}
+{"repo_name": "getconnect/connect-python", "requirements": ["pycrypto>=2.6", "requests", "futures>=3.0.3"]}
+{"repo_name": "taherkhalil/old-package", "requirements": ["frappe"]}
+{"repo_name": "pb866/reflectance-fitting", "requirements": ["matplotlib==2.1.2", "numpy==1.14.0", "scipy==1.0.0"]}
+{"repo_name": "mebjas/df2hc", "requirements": ["numpy", "pandas", "seaborn", "matplotlib", "scikit-learn", "mlflow"]}
+{"repo_name": "suneel0101/GoShout", "requirements": ["Django==1.4", "distribute==0.6.24", "psycopg2==2.4.5", "wsgiref==0.1.2", "MySQL-python==1.2.3", "gunicorn==0.14.2", "South==0.7.4", "python-dateutil==2.1", "simplejson==2.5.2"]}
+{"repo_name": "gavin-kang/AiPlatform", "requirements": ["flask", "flasgger", "flask_cors", "gunicorn", "gevent", "redis"]}
+{"repo_name": "kazemnejad/Instant-Lyrics", "requirements": ["requests", "beautifulsoup4", "lxml"]}

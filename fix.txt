@@ -1,0 +1,6 @@
+import threading
+
+def hard_timeout_handler():
+    logger.error(f"Process hard timeout after {args.timeout} seconds")
+    os._exit(1)
+timer = threading.Timer(args.timeout, hard_timeout_handler)

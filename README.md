@@ -1,117 +1,335 @@
-# X-Repo2Run
+# Repo2Run
 
-An LLM-based build agent system that helps manage and automate build processes in containerized environments in various programming languages. This project provides tools for handling dependencies, resolving conflicts, and managing build configurations.
+A robust tool to configure and run repositories with automated dependency management.
 
 ## Features
 
-- Docker-based sandbox environment for isolated builds
-- Automated dependency management and conflict resolution
-- Waiting list and conflict list management for package dependencies
-- Error format handling and output collection
-- Support for both remote repositories and local folders
-
-## Prerequisites
-
-- Python 3.x
-- Docker
-- Git
+- Clone repositories from GitHub or use local repositories
+- Extract dependencies from various sources (requirements.txt, setup.py, pyproject.toml, etc.)
+- Unify requirements from multiple sources
+- Install dependencies using either pip/venv (default) or UV (optional)
+- Find and run tests automatically
+- Generate detailed reports
+- Preserves original repository structure
 
 ## Installation
 
-1. Clone the repository:
 ```bash
-git clone https://github.com/terryyz/x-repo2run
-cd x-repo2run
-```
+# Clone the repository
+git clone https://github.com/yourusername/repo2run.git
+cd repo2run
 
-2. Install the required dependencies:
-```bash
-pip install -r requirements.txt
+# Install the package
+pip install -e .
 ```
 
 ## Usage
 
-Move tools `tools` to `/home/tools`.
+### Command Line Interface
 
-The build agent can be run in two modes:
-
-### 1. Remote Repository Mode
-
-For building from a GitHub repository:
+#### Comprehensive Usage Options
 
 ```bash
-python build_agent/main.py --repo <repository_full_name> <sha>
+# Basic repository processing
+repo2run --repo username/repo commit-sha [OPTIONS]
+repo2run --local /path/to/local/repo [OPTIONS]
+
+# Batch processing
+repo2run --repo-list repos.txt [OPTIONS]
+repo2run --local-list dirs.txt [OPTIONS]
 ```
 
-Where:
-- `repository_full_name`: The full name of the repository (e.g., user/repo)
-- `sha`: The commit SHA
+#### Argument Reference
 
-### 2. Local Folder Mode
+| Argument | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `--repo FULL_NAME SHA` | Process a specific GitHub repository | None | `--repo octocat/Hello-World abc123` |
+| `--local PATH` | Process a local repository | None | `--local /home/user/projects/myrepo` |
+| `--repo-list FILE` | Process multiple repositories from a list file | None | `--repo-list repos.txt` |
+| `--local-list FILE` | Process multiple local repositories from a list file | None | `--local-list local_repos.txt` |
+| `--output-dir DIR` | Directory to store output files | `output` | `--output-dir ./results` |
+| `--workspace-dir DIR` | Directory to use as workspace | Temporary directory | `--workspace-dir ./workspace` |
+| `--timeout SECONDS` | Maximum execution time | 7200 (2 hours) | `--timeout 3600` |
+| `--verbose` | Enable detailed logging | Disabled | `--verbose` |
+| `--overwrite` | Overwrite existing output directory | Disabled | `--overwrite` |
+| `--use-uv` | Use UV for dependency management | Disabled (uses pip/venv) | `--use-uv` |
+| `--num-workers N` | Number of parallel processing workers | Number of CPU cores | `--num-workers 4` |
+| `--collect-only` | Only collect test cases without running | Disabled | `--collect-only` |
 
-For building from a local folder:
+#### Detailed Usage Examples
 
 ```bash
-python build_agent/main.py --local <path_to_folder>
+# 1. Process a GitHub repository with verbose logging
+repo2run --repo username/repo commit-sha --output-dir ./output --verbose
+
+# 2. Process a local repository using UV for dependency management
+repo2run --local /path/to/local/repo --output-dir ./output --use-uv
+
+# 3. Process multiple repositories in parallel
+repo2run --repo-list repos.txt --output-dir ./output --num-workers 4
+
+# 4. Process local repositories with a custom workspace
+repo2run --local-list local_repos.txt --workspace-dir ./custom_workspace --output-dir ./output
+
+# 5. Collect test cases without running tests or installing dependencies
+repo2run --repo username/repo commit-sha --output-dir ./output --collect-only
+
+# 6. Set a custom timeout and overwrite existing output
+repo2run --local /path/to/local/repo --output-dir ./output --timeout 1800 --overwrite
 ```
 
-Where:
-- `path_to_folder`: Path to your local project folder
+#### Repository List File Format
 
-### Additional Options
+For `--repo-list` and `--local-list`, use the following format:
 
-- `--root_path`: The root path for the build process (optional, defaults to build_agent)
+```
+# repos.txt or local_repos.txt
+# Format: repository_identifier commit_sha
+octocat/Hello-World abc123
+another/repo def456
+# Lines starting with # are comments
+```
 
-## Project Structure
+### Unified Pipeline
 
-- `build_agent/` - Main package directory
-  - `agents/` - Agent implementations for build configuration
-  - `utils/` - Utility functions and helper classes
-  - `docker/` - Docker-related configurations
-  - `main.py` - Main entry point
-  - `multi_main.py` - Multi-process support
+The Unified Pipeline is a new workflow that:
 
-## Features in Detail
+1. Analyzes dependencies across all repositories (ignoring versions) and creates a union set
+2. Installs all dependencies in a single virtual environment
+3. Runs tests for each repository and identifies those that pass all tests or have no tests
 
-### Sandbox Environment
-The project uses Docker containers to create isolated build environments, ensuring clean and reproducible builds.
+This approach is more efficient when processing multiple repositories with overlapping dependencies.
 
-### Dependency Management
-- **Waiting List**: Manages package installation queue
-- **Conflict Resolution**: Handles version conflicts between packages
-- **Error Handling**: Formats and processes build errors
+#### Usage
 
-### Configuration Agent
-Utilizes GPT models to assist in build configuration and problem resolution.
+```bash
+# Process repositories from a list file
+python run_unified_pipeline.py --repo-list repos.txt --output-dir output_path [options]
 
-## Contributing
+# Process local directories from a list file
+python run_unified_pipeline.py --local-list dirs.txt --output-dir output_path [options]
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+# Use the main repo2run command with the --global flag
+repo2run --global --repo-list repos.txt --output-dir output_path [options]
+repo2run --global --local-list dirs.txt --output-dir output_path [options]
+```
 
-## Citation
+#### Arguments
 
-```bibtex
-@article{zhuo2025config,
-  title={Configuraing Multilingual Docker Environment via Code Agent},
-  author={Zhuo, Terry Yue},
-  year={2025}
+| Argument | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `--repo-list FILE` | Process multiple repositories from a list file | None | `--repo-list repos.txt` |
+| `--local-list FILE` | Process multiple local repositories from a list file | None | `--local-list local_repos.txt` |
+| `--output-dir DIR` | Directory to store output files | `output` | `--output-dir ./results` |
+| `--workspace-dir DIR` | Directory to use as workspace | Temporary directory | `--workspace-dir ./workspace` |
+| `--timeout SECONDS` | Maximum execution time | 7200 (2 hours) | `--timeout 3600` |
+| `--verbose` | Enable detailed logging | Disabled | `--verbose` |
+| `--overwrite` | Overwrite existing output directory | Disabled | `--overwrite` |
+| `--use-uv` | Use UV for dependency management | Disabled (uses pip/venv) | `--use-uv` |
+| `--max-workers N` | Maximum number of worker threads | 4 | `--max-workers 8` |
+| `--repo-range START END` | Process only a specific range of repositories | None (all repos) | `--repo-range 0 100` |
+
+#### Output Files
+
+The Unified Pipeline generates the following output files:
+
+1. `requirements.txt`: Union of all dependencies across repositories (without version specifiers)
+2. `repo_req.json`: Mapping of repositories to their required dependencies
+3. `install_status.json`: Status of dependency installation (success/failure)
+4. `records.jsonl`: Detailed logs and execution status for each repository
+5. `successful_repos.json`: List of repositories that pass all tests or have no tests
+
+#### Enhanced Progress Reporting
+
+The unified pipeline provides detailed progress reporting throughout the execution:
+
+1. **Repository Loading Stage**: Lists repositories to be processed
+2. **Dependency Analysis Stage**: Shows real-time progress with package counts per repository 
+3. **Environment Creation Stage**: Shows detailed installation progress with batched processing
+4. **Test Execution Stage**: Displays test status for each repository in real-time
+5. **Final Summary**: Presents comprehensive statistics including:
+   - Test success/failure rates
+   - Dependency installation success rates
+   - Most common dependencies across repositories
+   - Overall repository success rate
+
+Each stage is clearly separated with visual dividers, and key statistics are highlighted with emoji indicators for easier visual parsing.
+
+#### Example
+
+```bash
+# Process 10 repositories, using 8 worker threads and UV for dependency management
+python run_unified_pipeline.py --repo-list repos.txt --output-dir ./unified_output --max-workers 8 --use-uv --verbose
+
+# Or use the main command with global flag
+repo2run --global --repo-list repos.txt --output-dir ./unified_output --max-workers 8 --use-uv --verbose
+
+# Process only repositories from index 0 to 99 (first 100 repos) in the list
+repo2run --global --repo-list repos.txt --output-dir ./batch1_output --repo-range 0 100 --use-uv
+
+# Process repositories from index 100 to 199 (second 100 repos) in the list
+repo2run --global --repo-list repos.txt --output-dir ./batch2_output --repo-range 100 200 --use-uv
+
+# Distribute work across multiple machines or jobs by specifying different ranges
+# Example for a CI/CD pipeline that processes 500 repos in 5 parallel jobs
+# Job 1: repo2run --global --repo-list repos.txt --output-dir ./job1 --repo-range 0 100
+# Job 2: repo2run --global --repo-list repos.txt --output-dir ./job2 --repo-range 100 200
+# ... and so on
+```
+
+### Advanced Use Cases
+
+#### Continuous Integration
+
+```bash
+# In a CI pipeline, you might want to use verbose logging and collect test cases
+repo2run --repo username/repo $CI_COMMIT_SHA --output-dir ./ci_results --verbose --collect-only
+```
+
+#### Performance Testing
+
+```bash
+# Process multiple repositories with UV and parallel workers
+repo2run --repo-list performance_repos.txt --use-uv --num-workers 8 --output-dir ./perf_results
+```
+
+### Python API
+
+```python
+from repo2run.utils.repo_manager import RepoManager
+from repo2run.utils.dependency_extractor import DependencyExtractor
+from repo2run.utils.dependency_installer import DependencyInstaller
+from repo2run.utils.test_runner import TestRunner
+
+# Initialize repository
+repo_manager = RepoManager(workspace_dir="./workspace")
+repo_path = repo_manager.clone_repository("username/repo", "commit-sha")
+
+# Extract dependencies
+extractor = DependencyExtractor(repo_path)
+requirements = extractor.extract_all_requirements()
+unified_requirements = extractor.unify_requirements(requirements)
+
+# Install dependencies using pip/venv (default)
+installer = DependencyInstaller(repo_path, use_uv=False)
+venv_path = installer.create_virtual_environment()
+installation_results = installer.install_requirements(unified_requirements, venv_path)
+
+# Run tests with pip/venv
+test_runner = TestRunner(repo_path, venv_path, use_uv=False)
+test_results = test_runner.run_tests()
+
+# Or use UV for dependency management
+# installer = DependencyInstaller(repo_path, use_uv=True)
+# test_runner = TestRunner(repo_path, venv_path, use_uv=True)
+```
+
+## Dependency Management Systems
+
+Repo2Run supports two dependency management systems:
+
+1. **pip/venv (Default)**: Uses the standard Python venv module to create virtual environments and pip for package installation.
+   - More compatible with a wide range of repositories
+   - No additional dependencies required
+
+2. **UV (Optional)**: A fast Python package installer and resolver.
+   - Significantly faster installation
+   - Better dependency resolution in complex cases
+   - Can be enabled with the `--use-uv` flag
+
+You can choose the dependency system that works best for your use case.
+
+## Directory Structure
+
+When processing repositories, Repo2Run creates the following directory structure:
+
+```
+workspace_dir/
+├── github/
+│   └── username/
+│       └── repo_name/
+│           ├── (repository files)
+│           └── sha.txt
+└── local/
+    └── repo_name/
+        ├── (repository files)
+        └── sha.txt
+```
+
+## Output Files
+
+For each repository processed, Repo2Run generates the following output files:
+
+- `{repo_name}_requirements.txt`: Unified requirements extracted from the repository
+- `{repo_name}_installation_results.json`: Results of installing dependencies
+- `{repo_name}_test_results.json`: Results of running tests
+- `{repo_name}_summary.json`: Summary of the entire process
+
+### Results Format (results.jsonl)
+
+The main output is stored in `results.jsonl`, where each line is a JSON object containing the complete results for a repository. The format is:
+
+```json
+{
+    "repository": "username/repo@sha or /path/to/local/repo",
+    "repository_identifier": "username_repo_sha7 or repo_name",
+    "status": "success|failure|error|skip|partial_success",
+    "configuration": {
+        "output_directory": "/path/to/output",
+        "overwrite_mode": false,
+        "timeout": 7200,
+        "use_uv": false
+    },
+    "dependencies": {
+        "found": 10,
+        "installed": 8,
+        "details": ["package1==1.0.0", "package2>=2.0.0"],
+        "compiled_requirements": ["package1==1.0.0", "package2==2.1.0"]
+    },
+    "tests": {
+        "found": 50,
+        "passed": 45,
+        "failed": 3,
+        "skipped": 2,
+        "details": [
+            {
+                "name": "test_function",
+                "file": "tests/test_file.py",
+                "status": "passed|failed|skipped",
+                "message": "Error message if failed"
+            }
+        ]
+    },
+    "execution": {
+        "start_time": 1234567890.123,
+        "elapsed_time": 120.5
+    },
+    "logs": [
+        {
+            "timestamp": "2024-02-20 10:30:45",
+            "level": "INFO|WARNING|ERROR",
+            "message": "Log message"
+        }
+    ],
+    "error": "Error message if status is error"
 }
 ```
 
+Status values:
+- `success`: All tests passed
+- `partial_success`: Some tests passed, some failed
+- `failure`: All tests failed
+- `error`: An error occurred during processing
+- `skip`: No tests were found or all tests were skipped
+
+## Supported Dependency Sources
+
+- requirements.txt
+- setup.py
+- pyproject.toml (Poetry and PEP 621)
+- Pipfile
+- environment.yml
+
 ## License
 
-Apache-2.0
-
-## Ackowledgement
-
-- [https://github.com/bytedance/Repo2Run](https://github.com/bytedance/Repo2Run)
-- [https://github.com/Aider-AI/aider](https://github.com/Aider-AI/aider)
-
-
-## Contact
-
-terry.zhuo@moansh.edu
+This project is licensed under the Apache License 2.0 - see the LICENSE file for details. 

@@ -1,0 +1,9 @@
+# Sample repositories for testing the unified pipeline
+# Format: repository_name commit_sha
+
+pytest-dev/pytest 7.0.1
+pallets/flask 2.0.0
+django/django 3.2.0
+psf/requests 2.25.1
+yaml/pyyaml 6.0
+numpy/numpy 1.20.0 
